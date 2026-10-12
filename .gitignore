@@ -1,0 +1,12 @@
+Set-Content -Path .gitignore -Value @"
+node_modules/
+agendamento-mobile/node_modules/
+.expo/
+.claude/
+bin/
+obj/
+*.user
+*.suo
+.env
+.env.local
+"@
