@@ -8,7 +8,11 @@ public class Appointment
     public string ClientName { get; set; } = string.Empty;
     public string ClientPhone { get; set; } = string.Empty; // WhatsApp para confirmação
 
-    public string ClientAddress { get; set; } = string.Empty;
+    public string? ClientAddress { get; set; }
+
+    // Como a cliente quer o serviço + fotos de referência (nomes dos arquivos em uploads/)
+    public string? Description { get; set; }
+    public List<string> ReferenceImages { get; set; } = new();
 
     // Chave estrangeira para o serviço
     public int ServiceItemId { get; set; }

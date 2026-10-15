@@ -31,7 +31,6 @@ namespace AgendamentoApi.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("ClientAddress")
-                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("ClientName")
@@ -45,8 +44,15 @@ namespace AgendamentoApi.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("EndTime")
                         .HasColumnType("timestamp with time zone");
+
+                    b.PrimitiveCollection<List<string>>("ReferenceImages")
+                        .IsRequired()
+                        .HasColumnType("text[]");
 
                     b.Property<int>("ServiceItemId")
                         .HasColumnType("integer");

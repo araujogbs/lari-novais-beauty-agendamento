@@ -10,3 +10,4 @@ obj/
 .env
 .env.local
 "@
+uploads/

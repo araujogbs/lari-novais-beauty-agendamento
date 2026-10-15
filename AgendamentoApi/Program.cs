@@ -1,6 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using AgendamentoApi.Data;
 using AgendamentoApi.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 
 
@@ -24,14 +27,37 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// Configuração JWT (a chave vem de User Secrets / variável de ambiente, nunca do repositório)
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32)
+{
+    throw new InvalidOperationException(
+        "Jwt:Key não configurada ou com menos de 32 bytes. " +
+        "Defina com 'dotnet user-secrets set \"Jwt:Key\" \"<chave>\"' ou a variável de ambiente Jwt__Key.");
+}
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-// Regista o serviço de WhatsApp com HttpClient gerenciado pelo .NET
+// Registro dos serviços externos (WhatsApp com HttpClient gerenciado pelo .NET)
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
-// Registro dos serviços externos
-builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
-builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>(); // Adicione esta linha
+builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 
 var app = builder.Build();
 
@@ -44,6 +70,7 @@ if (app.Environment.IsDevelopment())
 // 2. Ativar o CORS (deve vir antes de MapControllers)
 app.UseCors("AllowAll");
 
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 

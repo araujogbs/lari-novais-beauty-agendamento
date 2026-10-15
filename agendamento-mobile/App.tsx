@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useFonts, CormorantGaramond_400Regular, CormorantGaramond_400Regular_Italic } from '@expo-google-fonts/cormorant-garamond';
 import {
   StyleSheet,
@@ -6,17 +6,21 @@ import {
   View,
   FlatList,
   TouchableOpacity,
+  Pressable,
   ActivityIndicator,
   SafeAreaView,
   StatusBar,
   TextInput,
   ScrollView,
-  Alert,
   ImageBackground,
+  Image,
+  Platform,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { Ionicons } from '@expo/vector-icons';
 import api from './src/services/api';
+import { authService } from './src/services/auth';
 
 // Configuração do calendário em Português
 LocaleConfig.locales['pt-br'] = {
@@ -57,7 +61,12 @@ interface AppointmentItem {
   status: string;
   serviceItem?: ServiceItem;
   clientAddress?: string;
+  description?: string;
+  referenceImages?: string[];
 }
+
+const MAX_IMAGES = 5;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export default function App() {
   // 1. Carregar a fonte (mantenha como você já fez)
@@ -68,10 +77,27 @@ export default function App() {
 
   // Atualize esta linha:
   const [viewMode, setViewMode] = useState<'welcome' | 'client' | 'adminLogin' | 'admin'>('welcome');
-  
-  // Adicione este novo estado para a senha:
+
+  // Estados de autenticação
+  const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [step, setStep] = useState<1 | 2>(1);
+
+  // Verifica se o usuário está autenticado ao mudar para o modo admin
+  useEffect(() => {
+    if (viewMode === 'admin') {
+      checkAuthAndLoadAppointments();
+    }
+  }, [viewMode]);
+
+  const checkAuthAndLoadAppointments = async () => {
+    const isAuthenticated = await authService.isAuthenticated();
+    if (!isAuthenticated) {
+      setViewMode('adminLogin');
+      return;
+    }
+    fetchAdminAppointments(adminDate);
+  };
 
   // Estados dos Serviços
   const [services, setServices] = useState<ServiceItem[]>([]);
@@ -87,11 +113,32 @@ export default function App() {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [clientAddress, setClientAddress] = useState('');
+  const [description, setDescription] = useState('');
+  const [images, setImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
 
   // Estados da Administração
+  const [adminToken, setAdminToken] = useState<string | null>(null); // para carregar as fotos (rota protegida)
   const [adminDate, setAdminDate] = useState(todayStr);
   const [appointmentsList, setAppointmentsList] = useState<AppointmentItem[]>([]);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
+
+  // Estados do bloqueio de agenda
+  const [showBlockForm, setShowBlockForm] = useState(false);
+  const [blockMode, setBlockMode] = useState<'day' | 'range'>('day');
+  const [blockStart, setBlockStart] = useState('09:00');
+  const [blockEnd, setBlockEnd] = useState('15:00');
+  const [blockReason, setBlockReason] = useState('Folga');
+
+  // Aviso na tela (Alert.alert não funciona no navegador, então usamos um banner em todas as plataformas)
+  const [toast, setToast] = useState<{ title: string; message: string; type: 'success' | 'error' | 'warn' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const notify = (title: string, message: string, type?: 'success' | 'error' | 'warn') => {
+    const kind = type ?? (/sucesso|confirmado/i.test(title) ? 'success' : /atenção|horário/i.test(title) ? 'warn' : 'error');
+    setToast({ title, message, type: kind });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  };
 
   // Estados visuais
   const [loading, setLoading] = useState(false);
@@ -107,8 +154,9 @@ export default function App() {
       setLoading(true);
       const response = await api.get<ServiceItem[]>('/services');
       setServices(response.data);
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível carregar os serviços da API.');
+    } catch (error: any) {
+      console.error('fetchServices falhou:', error.code, error.message, error.response?.status, `${api.defaults.baseURL}/services`);
+      notify('Erro', 'Não foi possível carregar os serviços da API.');
     } finally {
       setLoading(false);
     }
@@ -123,7 +171,7 @@ export default function App() {
       });
       setAvailableSlots(response.data);
     } catch (error) {
-      Alert.alert('Erro', 'Falha ao procurar horários livres para esta data.');
+      notify('Erro', 'Falha ao procurar horários livres para esta data.');
     } finally {
       setLoadingSlots(false);
     }
@@ -132,14 +180,71 @@ export default function App() {
   const fetchAdminAppointments = async (dateStr: string) => {
     try {
       setLoadingAdmin(true);
+      setAdminToken(await authService.getToken());
       const response = await api.get<AppointmentItem[]>('/appointments', {
         params: { date: dateStr },
       });
       setAppointmentsList(response.data);
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível carregar os agendamentos.');
+    } catch (error: any) {
+      console.error('Erro ao buscar agendamentos:', error.response?.status, error.response?.data);
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        // Token inválido ou expirado, fazer logout e ir para login
+        await authService.removeToken();
+        setViewMode('adminLogin');
+        notify('Sessão expirada', 'Por favor, faça login novamente.');
+      } else {
+        notify('Erro', 'Não foi possível carregar os agendamentos.');
+      }
     } finally {
       setLoadingAdmin(false);
+    }
+  };
+
+  const getErrorMessage = (error: any, fallback: string) => {
+    if (error.response) return error.response.data?.message || fallback;
+    if (error.request) return `Sem conexão com o servidor (${api.defaults.baseURL}). Verifique o Wi-Fi e tente novamente.`;
+    return fallback;
+  };
+
+  // Área da maquiadora fica escondida: abre com toque longo no título da tela inicial
+  const openAdminArea = async () => {
+    const isAuthenticated = await authService.isAuthenticated();
+    setViewMode(isAuthenticated ? 'admin' : 'adminLogin');
+  };
+
+  const isValidTime = (t: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+
+  const handleBlockDay = async () => {
+    const payload: { date: string; reason?: string; startTime?: string; endTime?: string } = {
+      date: adminDate,
+      reason: blockReason.trim() || undefined,
+    };
+
+    if (blockMode === 'range') {
+      if (!isValidTime(blockStart) || !isValidTime(blockEnd)) {
+        notify('Atenção', 'Use o formato HH:mm (ex: 09:00).');
+        return;
+      }
+      if (blockStart >= blockEnd) {
+        notify('Atenção', 'O início deve ser anterior ao fim.');
+        return;
+      }
+      if (blockStart < '09:00' || blockEnd > '18:00') {
+        notify('Atenção', 'O intervalo deve estar entre 09:00 e 18:00.');
+        return;
+      }
+      payload.startTime = `${blockStart}:00`;
+      payload.endTime = `${blockEnd}:00`;
+    }
+
+    try {
+      await api.post('/appointments/block-slot', payload);
+      notify('Sucesso', blockMode === 'day' ? 'Dia bloqueado com sucesso!' : 'Intervalo bloqueado com sucesso!');
+      setShowBlockForm(false);
+      fetchAdminAppointments(adminDate);
+    } catch (error: any) {
+      console.error('Erro ao bloquear agenda:', error);
+      notify('Erro', getErrorMessage(error, 'Falha ao bloquear a agenda.'));
     }
   };
 
@@ -161,45 +266,85 @@ export default function App() {
     setClientPhone(formatted);
   };
 
+  const handlePickImages = async () => {
+    const remaining = MAX_IMAGES - images.length;
+    if (remaining <= 0) {
+      notify('Atenção', `Você pode anexar até ${MAX_IMAGES} imagens.`);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: remaining,
+      quality: 0.7, // reduz o tamanho do upload
+    });
+    if (result.canceled) return;
+
+    const tooBig = result.assets.some((a) => (a.fileSize ?? 0) > MAX_IMAGE_BYTES);
+    if (tooBig) {
+      notify('Atenção', 'Cada imagem deve ter até 5 MB.');
+    }
+    const valid = result.assets.filter((a) => (a.fileSize ?? 0) <= MAX_IMAGE_BYTES);
+    setImages((prev) => [...prev, ...valid].slice(0, MAX_IMAGES));
+  };
+
   const handleConfirmAppointment = async () => {
     if (!selectedSlot) {
-      Alert.alert('Horário', 'Selecione um horário disponível.');
+      notify('Horário', 'Selecione um horário disponível.');
       return;
     }
     if (!clientName.trim() || clientPhone.replace(/\D/g, '').length < 10) {
-      Alert.alert('Atenção', 'Preencha o seu nome e um WhatsApp válido.');
+      notify('Atenção', 'Preencha o seu nome e um WhatsApp válido.');
+      return;
+    }
+
+    if (!description.trim()) {
+      notify('Atenção', 'Descreva como você quer o serviço.');
       return;
     }
 
     try {
       setLoading(true);
-      const startTimeIso = `${selectedDate}T${selectedSlot}:00Z`;
+      // O slot está em horário de Brasília (UTC-3, sem horário de verão); a API recebe UTC
+      const startTimeIso = new Date(`${selectedDate}T${selectedSlot}:00-03:00`).toISOString();
 
-      await api.post('/appointments', {
-        clientName,
-        clientPhone,
-        clientAddress,
-        serviceItemId: selectedService?.id,
-        startTime: startTimeIso,
+      // multipart/form-data: campos de texto + fotos de referência
+      const form = new FormData();
+      form.append('clientName', clientName);
+      form.append('clientPhone', clientPhone);
+      form.append('clientAddress', clientAddress);
+      form.append('description', description.trim());
+      form.append('serviceItemId', String(selectedService?.id));
+      form.append('startTime', startTimeIso);
+      images.forEach((img, i) => {
+        if (Platform.OS === 'web' && img.file) {
+          form.append('images', img.file);
+        } else {
+          form.append('images', {
+            uri: img.uri,
+            name: img.fileName ?? `referencia-${i + 1}.jpg`,
+            type: img.mimeType ?? 'image/jpeg',
+          } as any);
+        }
       });
 
-      Alert.alert('Agendamento Confirmado!', 'Receberá os detalhes via WhatsApp.', [
-        {
-          text: 'Concluir',
-          onPress: () => {
-            setStep(1);
-            setSelectedService(null);
-            setSelectedSlot(null);
-            setClientName('');
-            setClientPhone('');
-            setClientAddress('');
-            setViewMode('welcome'); // Volta para a tela inicial ao concluir
-          },
-        },
-      ]);
+      await api.post('/appointments', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        transformRequest: (data) => data, // evita o axios serializar o FormData
+      });
+
+      setStep(1);
+      setSelectedService(null);
+      setSelectedSlot(null);
+      setClientName('');
+      setClientPhone('');
+      setClientAddress('');
+      setDescription('');
+      setImages([]);
+      setViewMode('welcome');
+      notify('Agendamento confirmado!', 'Você receberá os detalhes via WhatsApp.', 'success');
     } catch (error: any) {
-      const msg = error.response?.data?.message || 'Erro ao confirmar agendamento.';
-      Alert.alert('Aviso', msg);
+      notify('Não foi possível agendar', getErrorMessage(error, 'Erro ao confirmar agendamento.'));
     } finally {
       setLoading(false);
     }
@@ -207,24 +352,39 @@ export default function App() {
 
   const handleCancelAppointment = async (id: number) => {
     try {
-      await api.patch(`/appointments/${id}/status`, 'Cancelled', {
+      // A API espera uma string JSON (com aspas); o axios enviaria Cancelled cru e dava 400
+      await api.patch(`/appointments/${id}/status`, JSON.stringify('Cancelled'), {
         headers: { 'Content-Type': 'application/json' },
       });
-      Alert.alert('Sucesso', 'Marcação desmarcada com sucesso.');
+      notify('Sucesso', 'Marcação desmarcada com sucesso.');
       fetchAdminAppointments(adminDate);
     } catch (error) {
-      Alert.alert('Erro', 'Falha ao desmarcar.');
+      notify('Erro', 'Falha ao desmarcar. Tente novamente.');
     }
   };
 
-  const handleAdminLogin = () => {
-    // Senha simples para o MVP (pode alterar para a que desejar)
-    if (adminPassword === 'SUA_SENHA') {
-      setAdminPassword(''); // Limpa o campo
-      setViewMode('admin');
-      fetchAdminAppointments(adminDate);
-    } else {
-      Alert.alert('Acesso Negado', 'A senha informada está incorreta.');
+  const handleAdminLogin = async () => {
+    if (!adminUsername.trim() || !adminPassword) {
+      notify('Atenção', 'Informe usuário e senha.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await authService.login(adminUsername.trim(), adminPassword);
+      setAdminUsername('');
+      setAdminPassword('');
+      setViewMode('admin'); // o useEffect carrega os agendamentos
+    } catch (error: any) {
+      const status = error.response?.status;
+      if (status === 401) {
+        notify('Acesso negado', 'Usuário ou senha incorretos.');
+      } else if (status === 503) {
+        notify('Login indisponível', 'O servidor ainda não tem o usuário administrador configurado.');
+      } else {
+        notify('Erro ao entrar', getErrorMessage(error, 'Não foi possível fazer login.'));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -239,6 +399,21 @@ export default function App() {
         imageStyle={styles.backgroundImage}
       >
         <View style={styles.overlay}>
+          {toast && (
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => setToast(null)}
+              style={[
+                styles.toast,
+                toast.type === 'success' && styles.toastSuccess,
+                toast.type === 'error' && styles.toastError,
+                toast.type === 'warn' && styles.toastWarn,
+              ]}
+            >
+              <Text style={styles.toastTitle}>{toast.title}</Text>
+              {!!toast.message && <Text style={styles.toastMessage}>{toast.message}</Text>}
+            </TouchableOpacity>
+          )}
           {/* Brand Header */}
           <View style={styles.brandBar}>
             {viewMode !== 'welcome' && (
@@ -266,29 +441,89 @@ export default function App() {
                 <Text style={[styles.navText, viewMode === 'client' && styles.navTextActive]}>Agendar Horário</Text>
               </TouchableOpacity>
 
+              {viewMode === 'admin' && (
+                <TouchableOpacity
+                  style={[styles.navBtn, viewMode === 'admin' && styles.navBtnActive]}
+                  onPress={() => {
+                    setViewMode('admin');
+                  }}
+                >
+                  <Ionicons name="calendar-outline" size={14} color={viewMode === 'admin' ? THEME.white : THEME.textLight} />
+                  <Text style={[styles.navText, viewMode === 'admin' && styles.navTextActive]}>Painel Ateliê</Text>
+                </TouchableOpacity>
+              )}
+
+              {viewMode === 'admin' && (
+                <TouchableOpacity
+                  style={styles.navBtn}
+                  onPress={async () => {
+                    await authService.removeToken();
+                    setViewMode('welcome');
+                  }}
+                >
+                  <Ionicons name="log-out-outline" size={14} color={THEME.textLight} />
+                  <Text style={[styles.navText, { color: THEME.textLight }]}>Sair</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+{/* --- TELA DE LOGIN ADMIN --- */}
+          {viewMode === 'adminLogin' && (
+            <View style={{ flex: 1, padding: 24 }}>
+              <Text style={styles.welcomeTitle}>
+                Lari Novais <Text style={styles.brandSubtitle}>Beauty</Text>
+              </Text>
+              <Text style={styles.welcomeTagline}>Painel Ateliê</Text>
+
+              <View style={styles.formCard}>
+                <Text style={styles.inputLabel}>Usuário</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={adminUsername}
+                  onChangeText={setAdminUsername}
+                  placeholder="Usuário"
+                  placeholderTextColor={THEME.textMuted}
+                  autoCapitalize="none"
+                />
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>Senha</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={adminPassword}
+                  onChangeText={setAdminPassword}
+                  placeholder="Senha"
+                  placeholderTextColor={THEME.textMuted}
+                  secureTextEntry
+                />
+              </View>
+
               <TouchableOpacity
-                style={[styles.navBtn, viewMode === 'admin' && styles.navBtnActive]}
-                onPress={() => {
-                  setViewMode('admin');
-                  fetchAdminAppointments(adminDate);
-                }}
+                style={styles.btnPrimary}
+                onPress={handleAdminLogin}
+                disabled={loading}
               >
-                <Ionicons name="calendar-outline" size={14} color={viewMode === 'admin' ? THEME.white : THEME.textLight} />
-                <Text style={[styles.navText, viewMode === 'admin' && styles.navTextActive]}>Painel Ateliê</Text>
+                {loading ? (
+                  <ActivityIndicator color={THEME.white} />
+                ) : (
+                  <Text style={styles.btnPrimaryText}>Entrar</Text>
+                )}
               </TouchableOpacity>
             </View>
           )}
 
-{/* --- TELA INICIAL (WELCOME) --- */}
+          {/* --- TELA INICIAL (WELCOME) --- */}
           {viewMode === 'welcome' && (
             <View style={styles.welcomeContainer}>
               <View style={styles.welcomeContent}>
                 {/* Ícone decorativo de estrelinhas/brilho */}
                 
                 
-                <Text style={styles.welcomeTitle}>
-                  Lari Novais <Text style={styles.brandSubtitle}>Beauty</Text>
-                </Text>
+                <Pressable onLongPress={openAdminArea} delayLongPress={4000}>
+                  <Text style={styles.welcomeTitle}>
+                    Lari Novais <Text style={styles.brandSubtitle}>Beauty</Text>
+                  </Text>
+                </Pressable>
                 <Text style={styles.welcomeTagline}>Beleza com Naturalidade, Técnica e Identidade</Text>
                 <Text style={styles.welcomeDesc}>
                   Atendimento exclusivo e personalizado a domicílio para casamentos, formaturas e eventos sociais.
@@ -302,17 +537,6 @@ export default function App() {
                 >
                   <Ionicons name="sparkles" size={18} color={THEME.white} />
                   <Text style={styles.welcomeBtnPrimaryText}>Agendar Meu Horário</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.welcomeBtnOutline}
-                  onPress={() => {
-                    setViewMode('admin');
-                    fetchAdminAppointments(adminDate);
-                  }}
-                >
-                  <Ionicons name="calendar-outline" size={16} color={THEME.roseDark} />
-                  <Text style={styles.welcomeBtnOutlineText}>Área da Maquiadora</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -457,6 +681,43 @@ export default function App() {
                     />
                   </View>
 
+                  <Text style={styles.sectionHeader}>4. Como você quer o serviço</Text>
+                  <View style={styles.formCard}>
+                    <Text style={styles.inputLabel}>Descrição *</Text>
+                    <TextInput
+                      style={[styles.textInput, { height: 100, textAlignVertical: 'top' }]}
+                      value={description}
+                      onChangeText={setDescription}
+                      placeholder="Ex: make leve e natural, pele iluminada, olhos em tons de marrom..."
+                      placeholderTextColor={THEME.textMuted}
+                      multiline
+                      maxLength={1000}
+                    />
+
+                    <Text style={[styles.inputLabel, { marginTop: 12 }]}>
+                      Imagens de referência (opcional) · {images.length}/{MAX_IMAGES}
+                    </Text>
+                    <View style={styles.imagesRow}>
+                      {images.map((img, i) => (
+                        <View key={img.uri} style={styles.thumbWrapper}>
+                          <Image source={{ uri: img.uri }} style={styles.thumb} />
+                          <TouchableOpacity
+                            style={styles.thumbRemove}
+                            onPress={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
+                          >
+                            <Ionicons name="close" size={14} color={THEME.white} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      {images.length < MAX_IMAGES && (
+                        <TouchableOpacity style={styles.addImageBtn} onPress={handlePickImages}>
+                          <Ionicons name="image-outline" size={22} color={THEME.roseDark} />
+                          <Text style={styles.addImageText}>Adicionar</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
                   <Text style={styles.disclaimerText}>
                     * O valor final pode sofrer acréscimo de taxa de deslocamento dependendo da região.
                   </Text>
@@ -495,6 +756,79 @@ export default function App() {
                 <Text style={styles.subtitle}>Sua gestão de agenda a domicílio</Text>
               </View>
 
+              <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+                {!showBlockForm ? (
+                  <TouchableOpacity style={styles.btnPrimary} onPress={() => setShowBlockForm(true)}>
+                    <Text style={styles.btnPrimaryText}>Bloquear Agenda</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.formCard}>
+                    <Text style={styles.inputLabel}>Bloquear {adminDate.split('-').reverse().join('/')}</Text>
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                      <TouchableOpacity
+                        style={[styles.slotBadge, blockMode === 'day' && styles.slotBadgeActive]}
+                        onPress={() => setBlockMode('day')}
+                      >
+                        <Text style={[styles.slotBadgeText, blockMode === 'day' && styles.slotBadgeTextActive]}>Dia Inteiro</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.slotBadge, blockMode === 'range' && styles.slotBadgeActive]}
+                        onPress={() => setBlockMode('range')}
+                      >
+                        <Text style={[styles.slotBadgeText, blockMode === 'range' && styles.slotBadgeTextActive]}>Intervalo de Horas</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {blockMode === 'range' && (
+                      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.inputLabel}>Início</Text>
+                          <TextInput
+                            style={styles.textInput}
+                            value={blockStart}
+                            onChangeText={setBlockStart}
+                            placeholder="09:00"
+                            placeholderTextColor={THEME.textMuted}
+                            keyboardType="numbers-and-punctuation"
+                            maxLength={5}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.inputLabel}>Fim</Text>
+                          <TextInput
+                            style={styles.textInput}
+                            value={blockEnd}
+                            onChangeText={setBlockEnd}
+                            placeholder="15:00"
+                            placeholderTextColor={THEME.textMuted}
+                            keyboardType="numbers-and-punctuation"
+                            maxLength={5}
+                          />
+                        </View>
+                      </View>
+                    )}
+
+                    <Text style={styles.inputLabel}>Motivo</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={blockReason}
+                      onChangeText={setBlockReason}
+                      placeholder="Folga, Férias, Compromisso..."
+                      placeholderTextColor={THEME.textMuted}
+                    />
+
+                    <View style={styles.actionButtons}>
+                      <TouchableOpacity style={styles.btnSecondary} onPress={() => setShowBlockForm(false)}>
+                        <Text style={styles.btnSecondaryText}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.btnPrimary} onPress={handleBlockDay}>
+                        <Text style={styles.btnPrimaryText}>Salvar Bloqueio</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+
               <View style={[styles.calendarContainer, { marginHorizontal: 16 }]}>
                 <Calendar
                   current={adminDate}
@@ -529,14 +863,29 @@ export default function App() {
                     </View>
                   }
                   renderItem={({ item }) => {
-                    const startTimeFormatted = new Date(item.startTime).toLocaleTimeString([], {
+                    const startTimeFormatted = new Date(item.startTime).toLocaleTimeString('pt-BR', {
+                      timeZone: 'America/Sao_Paulo',
                       hour: '2-digit',
                       minute: '2-digit',
                     });
                     const isCancelled = item.status === 'Cancelled';
+                    const isBlocked = item.status === 'Blocked';
+
+                    // Define styles based on status
+                    let badgeText, badgeColor;
+                    if (isCancelled) {
+                      badgeText = 'Cancelado';
+                      badgeColor = styles.badgeCancelled;
+                    } else if (isBlocked) {
+                      badgeText = 'Bloqueado';
+                      badgeColor = { backgroundColor: '#F0F0F0', borderColor: '#CCCCCC' }; // Neutral gray
+                    } else {
+                      badgeText = 'Confirmado';
+                      badgeColor = styles.badgeConfirmed;
+                    }
 
                     return (
-                      <View style={[styles.adminCard, isCancelled && styles.cardCancelled]}>
+                      <View style={[styles.adminCard, isCancelled && styles.cardCancelled, isBlocked && { backgroundColor: '#F8F8F8' }]}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.adminClientTitle}>{item.clientName}</Text>
                           <Text style={styles.adminSubText}>
@@ -546,17 +895,48 @@ export default function App() {
                           {item.clientAddress ? (
                             <Text style={styles.adminPhoneText}>Local: {item.clientAddress}</Text>
                           ) : null}
-                          <Text style={[styles.badgeText, isCancelled ? styles.badgeCancelled : styles.badgeConfirmed]}>
-                            {isCancelled ? 'Cancelado' : 'Confirmado'}
+                          {item.description ? (
+                            <Text style={styles.adminPhoneText}>Pedido: {item.description}</Text>
+                          ) : null}
+                          {item.referenceImages && item.referenceImages.length > 0 && adminToken ? (
+                            <View style={[styles.imagesRow, { marginTop: 6 }]}>
+                              {item.referenceImages.map((name) => (
+                                <Image
+                                  key={name}
+                                  source={{
+                                    uri: `${api.defaults.baseURL}/appointments/images/${name}`,
+                                    headers: { Authorization: `Bearer ${adminToken}` },
+                                  }}
+                                  style={styles.thumb}
+                                />
+                              ))}
+                            </View>
+                          ) : null}
+                          {isBlocked && (
+                            <Text style={{ fontSize: 12, color: '#666666', marginTop: 4, fontStyle: 'italic' }}>
+                              Motivo: {item.clientName.replace('[BLOQUEIO] ', '')}
+                            </Text>
+                          )}
+                          <Text style={[styles.badgeText, badgeColor]}>
+                            {badgeText}
                           </Text>
                         </View>
 
-                        {!isCancelled && (
+                        {!isCancelled && !isBlocked && (
                           <TouchableOpacity
                             style={styles.cancelAction}
                             onPress={() => handleCancelAppointment(item.id)}
                           >
                             <Text style={styles.cancelActionText}>Desmarcar</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {isBlocked && (
+                          <TouchableOpacity
+                            style={[styles.cancelAction, { backgroundColor: '#FFE4B5' }]}
+                            onPress={() => handleCancelAppointment(item.id)}
+                          >
+                            <Text style={styles.cancelActionText}>Desbloquear</Text>
                           </TouchableOpacity>
                         )}
                       </View>
@@ -590,6 +970,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(250, 249, 248, 0.4)',
   },
+  toast: {
+    position: 'absolute',
+    top: 40,
+    left: 16,
+    right: 16,
+    zIndex: 100,
+    elevation: 10,
+    padding: 14,
+    borderRadius: 10,
+    borderLeftWidth: 5,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  toastSuccess: { borderLeftColor: '#386641', backgroundColor: '#EAF4EC' },
+  toastError: { borderLeftColor: '#9E2A2B', backgroundColor: '#FCECEB' },
+  toastWarn: { borderLeftColor: '#B7791F', backgroundColor: '#FFF6E0' },
+  toastTitle: { fontSize: 14, fontWeight: '700', color: THEME.text },
+  toastMessage: { fontSize: 13, color: THEME.textLight, marginTop: 2 },
   brandBar: {
     alignItems: 'center',
     paddingTop: 45,
@@ -808,6 +1209,47 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: THEME.text,
+  },
+  imagesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  thumbWrapper: {
+    width: 64,
+    height: 64,
+  },
+  thumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    backgroundColor: THEME.roseLight,
+  },
+  thumbRemove: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#9E2A2B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addImageBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: THEME.rose,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  addImageText: {
+    fontSize: 10,
+    color: THEME.roseDark,
   },
   disclaimerText: {
     fontSize: 11,
