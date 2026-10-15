@@ -132,26 +132,27 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 |---|---|---|---|
 | GET | `/services` | Público | Lista serviços ativos |
 | GET | `/services/{id}` | Público | Busca um serviço |
-| POST | `/services` | Público ⚠️ | Cadastra serviço (veja [Limitações](#limitações-conhecidas-e-próximos-passos)) |
+| POST | `/services` | Admin | Cadastra serviço (o `Id` enviado é ignorado) |
 
 ### Autenticação
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| POST | `/auth/login` | Público | Body `{ "Username", "Password" }`. Devolve `{ token }` (JWT válido por 2 h). `401` se inválido, `503` se o admin não estiver configurado |
+| POST | `/auth/login` | Público (5/min por IP) | Body `{ "Username", "Password" }`. Devolve `{ token }` (JWT válido por 2 h). `401` se inválido, `503` se o admin não estiver configurado |
 
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
 | GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1` | Público | Horários livres (`["09:00","09:30",...]`) |
-| POST | `/appointments` | Público | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
-| GET | `/appointments/my-appointments?phone=` | Público | Agendamentos futuros confirmados daquele telefone |
-| POST | `/appointments/{id}/client-cancel` | Público | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
+| POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
 | PATCH | `/appointments/{id}/status` | Admin | Muda o status (body: string JSON, ex.: `"Cancelled"`) |
 | POST | `/appointments/block-slot` | Admin | Bloqueia agenda: `{ date, startTime?, endTime?, reason? }` (sem horários = expediente todo) |
 | GET | `/appointments/images/{arquivo}` | Admin | Serve uma foto de referência |
 
 Rotas de admin exigem o header `Authorization: Bearer <token>`.
+Excedeu o limite de requisições por IP, a API responde `429`.
 
 ### Fotos de referência
 - Salvas em `AgendamentoApi/uploads/` com nome aleatório (GUID); o nome original nunca é usado.
@@ -174,6 +175,7 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `Admin:PasswordHash` | Sim | Hash da senha no formato do ASP.NET Identity (`PasswordHasher`). Nunca a senha em texto |
 | `WhatsApp:ApiUrl` / `WhatsApp:ApiKey` | Não | Sem isso, a mensagem só aparece no log (simulação) |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
+| `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
 
 ```bash
 cd AgendamentoApi
@@ -252,15 +254,17 @@ Já implementado:
 - Cancelamento pela cliente devolve a **mesma resposta** para "não existe" e "telefone não confere", sem revelar agendamentos de terceiros.
 - O app não registra senhas nem tokens nos logs.
 - Segredos fora do Git (User Secrets e variáveis de ambiente).
+- `POST /api/services` exige papel `Admin`; o `Id` enviado pelo cliente é ignorado.
+- **Limite de requisições por IP** (`429`): login 5/min, consulta e cancelamento de agendamentos 10/min, criação de agendamentos 10 a cada 10 min. Dificulta força bruta de senha e a descoberta de telefones.
+- **CORS restrito:** em produção só as origens de `Cors:AllowedOrigins`; liberado geral apenas em desenvolvimento, e só com os métodos e headers necessários.
+- **HTTPS forçado em produção** (redirecionamento + HSTS) e headers `X-Content-Type-Options: nosniff` e `X-Frame-Options: DENY`.
 
 ---
 
 ## Limitações conhecidas e próximos passos
 
-- **"Meus Agendamentos" usa só o telefone como prova de identidade.** Quem souber o WhatsApp de uma cliente vê e cancela os agendamentos dela. Para endurecer: código de verificação por SMS/WhatsApp e/ou limite de tentativas por IP.
-- **`POST /api/services` é público:** qualquer um pode cadastrar serviços. Deveria exigir `[Authorize(Roles = "Admin")]`.
-- **CORS liberado para qualquer origem** (`AllowAll`) — restrinja antes de ir para produção.
-- **Sem HTTPS** no fluxo de desenvolvimento (HTTP simples na rede local). Em produção, use HTTPS.
+- **"Meus Agendamentos" usa só o telefone como prova de identidade.** O limite por IP dificulta, mas não impede, que alguém que saiba o WhatsApp de uma cliente veja e cancele os agendamentos dela. Para endurecer de vez: código de verificação por SMS/WhatsApp.
+- **Em produção**, defina `Cors:AllowedOrigins` (se houver cliente web) e publique atrás de HTTPS (o redirecionamento exige que o servidor ou proxy exponha a porta HTTPS). Atrás de proxy reverso, configure `ForwardedHeaders` para o limite por IP enxergar o IP real da cliente.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
 - O texto da confirmação por WhatsApp pede para "responder esta mensagem" para desmarcar; vale atualizá-lo para citar o app (**Meus Agendamentos**).
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.

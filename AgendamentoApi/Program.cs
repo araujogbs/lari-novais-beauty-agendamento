@@ -4,6 +4,7 @@ using AgendamentoApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Threading.RateLimiting;
 
 
 
@@ -12,14 +13,34 @@ using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Configurar CORS
+// O app mobile nativo não é afetado por CORS; isto só vale para navegadores.
+// Produção: liste as origens em Cors:AllowedOrigins (ex.: Cors__AllowedOrigins__0).
+// Em desenvolvimento, sem lista configurada, qualquer origem é aceita.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("Default", policy =>
     {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
+        if (allowedOrigins.Length > 0)
+            policy.WithOrigins(allowedOrigins).WithMethods("GET", "POST", "PATCH").WithHeaders("Authorization", "Content-Type");
+        else if (builder.Environment.IsDevelopment())
+            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+        // sem origens e fora de desenvolvimento: nenhuma origem de navegador é liberada
     });
+});
+
+// Limite de requisições por IP (contra força bruta e enumeração de telefones)
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    static RateLimitPartition<string> PerIp(HttpContext ctx, int limit, TimeSpan window) =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = limit, Window = window, QueueLimit = 0 });
+
+    options.AddPolicy("login", ctx => PerIp(ctx, 5, TimeSpan.FromMinutes(1)));
+    options.AddPolicy("lookup", ctx => PerIp(ctx, 10, TimeSpan.FromMinutes(1)));
+    options.AddPolicy("create", ctx => PerIp(ctx, 10, TimeSpan.FromMinutes(10)));
 });
 
 // Configuração do PostgreSQL
@@ -67,8 +88,22 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
+
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";
+    await next();
+});
+
 // 2. Ativar o CORS (deve vir antes de MapControllers)
-app.UseCors("AllowAll");
+app.UseCors("Default");
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

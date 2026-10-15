@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AgendamentoApi.Data;
@@ -45,9 +46,11 @@ public class ServicesController : ControllerBase
 
     // POST: api/services (Cadastra um novo serviço da maquiadora)
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ServiceItem>> CreateService(ServiceItem service)
     {
         // Adiciona no contexto e salva no banco de dados
+        service.Id = 0; // o Id é sempre gerado pelo banco
         _context.Services.Add(service);
         await _context.SaveChangesAsync();
 

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using AgendamentoApi.Data;
@@ -84,6 +85,7 @@ public class AppointmentsController : ControllerBase
 
     // POST: api/appointments (Efetua a marcação validando conflitos)
     [HttpPost]
+    [EnableRateLimiting("create")]
     [Consumes("multipart/form-data")]
     public async Task<ActionResult<Appointment>> CreateAppointment([FromForm] CreateAppointmentDto dto)
     {
@@ -198,6 +200,7 @@ _context.Appointments.Add(appointment);
 
     // GET: api/appointments/my-appointments?phone=(11) 99999-9999 (público)
     [HttpGet("my-appointments")]
+    [EnableRateLimiting("lookup")]
     public async Task<ActionResult<IEnumerable<MyAppointmentDto>>> GetMyAppointments([FromQuery] string? phone)
     {
         var wanted = NormalizePhone(phone);
@@ -234,6 +237,7 @@ _context.Appointments.Add(appointment);
 
     // POST: api/appointments/5/client-cancel (público; exige o telefone do agendamento)
     [HttpPost("{id}/client-cancel")]
+    [EnableRateLimiting("lookup")]
     public async Task<IActionResult> ClientCancel(int id, [FromBody] ClientCancelDto dto)
     {
         var appointment = await _context.Appointments.FindAsync(id);
