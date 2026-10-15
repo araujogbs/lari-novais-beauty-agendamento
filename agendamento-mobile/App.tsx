@@ -16,6 +16,11 @@ import {
   Image,
   Platform,
   Linking,
+  Animated,
+  LayoutAnimation,
+  Modal,
+  Vibration,
+  UIManager,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
@@ -62,6 +67,8 @@ interface AppointmentItem {
   status: string;
   serviceItem?: ServiceItem;
   clientAddress?: string;
+  travelFee?: number | null;
+  distanceKm?: number | null;
   description?: string;
   referenceImages?: string[];
 }
@@ -73,7 +80,84 @@ interface MyAppointment {
   startTime: string;
   endTime: string;
   clientAddress?: string;
+  travelFee?: number | null;
+  distanceKm?: number | null;
   status: string;
+}
+
+interface FeeEstimate {
+  cep: string;
+  street: string;
+  neighborhood: string;
+  city: string;
+  distanceKm: number;
+  travelFee: number;
+}
+
+const formatBRL = (v: number) => v.toFixed(2).replace('.', ',');
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+const animateLayout = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+const MOOD_TAGS = ['Pele Glow', 'Make Matte', 'Olho Marcante', 'Natural / Clean', 'Coque Clássico', 'Ondas / Cachos'];
+
+type LightboxSource = { uri: string; headers?: Record<string, string> };
+
+// Bloco placeholder com opacidade pulsante
+function SkeletonBlock({ height = 64, style }: { height?: number; style?: any }) {
+  const opacity = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.9, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return <Animated.View style={[{ height, borderRadius: 12, backgroundColor: THEME.roseLight, opacity }, style]} />;
+}
+
+function SkeletonList({ height = 64 }: { height?: number }) {
+  return (
+    <View style={{ paddingHorizontal: 16, gap: 12, marginVertical: 14 }}>
+      {[0, 1, 2].map((i) => (
+        <SkeletonBlock key={i} height={height} />
+      ))}
+    </View>
+  );
+}
+
+// Indicador de etapas com linha que preenche
+function Stepper({ step }: { step: 1 | 2 }) {
+  const fill = useRef(new Animated.Value(step === 2 ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(fill, { toValue: step === 2 ? 1 : 0, duration: 350, useNativeDriver: false }).start();
+  }, [step, fill]);
+  const width = fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  return (
+    <View style={styles.stepper}>
+      <View style={styles.stepItem}>
+        <View style={[styles.stepDot, styles.stepDotActive]}>
+          {step === 2 ? <Ionicons name="checkmark" size={14} color={THEME.white} /> : <Text style={styles.stepDotText}>1</Text>}
+        </View>
+        <Text style={[styles.stepLabel, styles.stepLabelActive]}>Serviço</Text>
+      </View>
+      <View style={styles.stepLine}>
+        <Animated.View style={[styles.stepLineFill, { width }]} />
+      </View>
+      <View style={styles.stepItem}>
+        <View style={[styles.stepDot, step === 2 && styles.stepDotActive]}>
+          <Text style={[styles.stepDotText, step !== 2 && { color: THEME.textMuted }]}>2</Text>
+        </View>
+        <Text style={[styles.stepLabel, step === 2 && styles.stepLabelActive]}>Data & Detalhes</Text>
+      </View>
+    </View>
+  );
 }
 
 const MAX_IMAGES = 5;
@@ -87,7 +171,8 @@ export default function App() {
   });
 
   // Atualize esta linha:
-  const [viewMode, setViewMode] = useState<'welcome' | 'client' | 'adminLogin' | 'admin' | 'myAppointments'>('welcome');
+  const [viewMode, setViewMode] = useState<'welcome' | 'client' | 'adminLogin' | 'admin' | 'myAppointments' | 'success'>('welcome');
+  const [booked, setBooked] = useState<{ phone: string; service: string; when: string; total: number } | null>(null);
 
   // Estados de autenticação
   const [adminUsername, setAdminUsername] = useState('');
@@ -124,6 +209,11 @@ export default function App() {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [clientAddress, setClientAddress] = useState('');
+  const [clientCep, setClientCep] = useState('');
+  const [addressNumber, setAddressNumber] = useState('');
+  const [feeEstimate, setFeeEstimate] = useState<FeeEstimate | null>(null);
+  const [feeLoading, setFeeLoading] = useState(false);
+  const [feeError, setFeeError] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [images, setImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
 
@@ -161,6 +251,24 @@ export default function App() {
   // Estados visuais
   const [loading, setLoading] = useState(false);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [lightbox, setLightbox] = useState<LightboxSource | null>(null);
+
+  const toggleMoodTag = (tag: string) => {
+    Vibration.vibrate(10);
+    setDescription((prev) => {
+      const parts = prev.split(',').map((t) => t.trim()).filter(Boolean);
+      const next = parts.includes(tag) ? parts.filter((t) => t !== tag) : [...parts, tag];
+      return next.join(', ');
+    });
+  };
+
+  const formatEstimatedRange = () => {
+    if (!selectedSlot || !selectedService) return '';
+    const [h, m] = selectedSlot.split(':').map(Number);
+    const total = h * 60 + m + selectedService.durationMinutes;
+    const end = `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    return `${selectedSlot} às ${end}`;
+  };
   
 
   useEffect(() => {
@@ -267,6 +375,7 @@ export default function App() {
   };
 
   const handleSelectService = (service: ServiceItem) => {
+    animateLayout();
     setSelectedService(service);
     setStep(2);
     fetchAvailableSlots(service.id, selectedDate);
@@ -286,6 +395,36 @@ export default function App() {
 
   const handlePhoneChange = (text: string) => setClientPhone(formatPhone(text));
 
+  const formatCep = (text: string) => {
+    const raw = text.replace(/\D/g, '').slice(0, 8);
+    return raw.length > 5 ? `${raw.slice(0, 5)}-${raw.slice(5)}` : raw;
+  };
+
+  const handleCepChange = async (text: string) => {
+    const masked = formatCep(text);
+    setClientCep(masked);
+    setFeeError(null);
+    const digits = masked.replace(/\D/g, '');
+    if (digits.length < 8) {
+      setFeeEstimate(null);
+      return;
+    }
+    try {
+      setFeeLoading(true);
+      const { data } = await api.get<FeeEstimate>('/appointments/estimate-fee', { params: { cep: digits } });
+      setFeeEstimate(data);
+      const parts = [data.street, data.neighborhood].filter(Boolean);
+      if (parts.length) setClientAddress(parts.join(', '));
+    } catch (error: any) {
+      setFeeEstimate(null);
+      setFeeError(getErrorMessage(error, 'Não foi possível calcular o deslocamento para este CEP.'));
+    } finally {
+      setFeeLoading(false);
+    }
+  };
+
+  const travelFeeValue = feeEstimate?.travelFee ?? 0;
+
   // Atalhos do painel admin
   const openWhatsApp = (item: AppointmentItem) => {
     let phone = item.clientPhone.replace(/\D/g, '');
@@ -303,8 +442,9 @@ export default function App() {
   };
 
   // Meus Agendamentos
-  const handleSearchMyAppointments = async () => {
-    if (myPhone.replace(/\D/g, '').length < 10) {
+  const handleSearchMyAppointments = async (phoneOverride?: string) => {
+    const phone = typeof phoneOverride === 'string' ? phoneOverride : myPhone;
+    if (phone.replace(/\D/g, '').length < 10) {
       notify('Atenção', 'Informe um WhatsApp válido.');
       return;
     }
@@ -312,7 +452,7 @@ export default function App() {
       setMyLoading(true);
       setConfirmCancelId(null);
       const response = await api.get<MyAppointment[]>('/appointments/my-appointments', {
-        params: { phone: myPhone },
+        params: { phone },
       });
       setMyAppointments(response.data);
       setMySearched(true);
@@ -322,6 +462,23 @@ export default function App() {
       setMyLoading(false);
     }
   };
+
+  const goToMyAppointments = () => {
+    const phone = booked?.phone ?? '';
+    setMyPhone(phone);
+    setMyAppointments([]);
+    setMySearched(false);
+    setConfirmCancelId(null);
+    setViewMode('myAppointments');
+    handleSearchMyAppointments(phone);
+  };
+
+  useEffect(() => {
+    if (viewMode !== 'success') return;
+    const t = setTimeout(goToMyAppointments, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   const handleClientCancel = async (id: number) => {
     try {
@@ -381,7 +538,9 @@ export default function App() {
       const form = new FormData();
       form.append('clientName', clientName);
       form.append('clientPhone', clientPhone);
-      form.append('clientAddress', clientAddress);
+      const fullAddress = [clientAddress.trim(), addressNumber.trim()].filter(Boolean).join(', ');
+      form.append('clientAddress', fullAddress);
+      if (feeEstimate) form.append('cep', clientCep.replace(/\D/g, ''));
       form.append('description', description.trim());
       form.append('serviceItemId', String(selectedService?.id));
       form.append('startTime', startTimeIso);
@@ -402,16 +561,31 @@ export default function App() {
         transformRequest: (data) => data, // evita o axios serializar o FormData
       });
 
+      const whenLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString('pt-BR', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      });
+      setBooked({
+        phone: clientPhone,
+        service: selectedService?.name ?? 'Serviço',
+        when: `${whenLabel} às ${selectedSlot}`,
+        total: (selectedService?.price ?? 0) + travelFeeValue,
+      });
+
       setStep(1);
       setSelectedService(null);
       setSelectedSlot(null);
       setClientName('');
       setClientPhone('');
       setClientAddress('');
+      setClientCep('');
+      setAddressNumber('');
+      setFeeEstimate(null);
+      setFeeError(null);
       setDescription('');
       setImages([]);
-      setViewMode('welcome');
-      notify('Agendamento confirmado!', 'Você receberá os detalhes via WhatsApp.', 'success');
+      setViewMode('success');
     } catch (error: any) {
       notify('Não foi possível agendar', getErrorMessage(error, 'Erro ao confirmar agendamento.'));
     } finally {
@@ -623,6 +797,28 @@ export default function App() {
             </View>
           )}
 
+          {/* --- AGENDAMENTO CONCLUÍDO --- */}
+          {viewMode === 'success' && booked && (
+            <View style={styles.successWrap}>
+              <View style={styles.successIcon}>
+                <Ionicons name="checkmark" size={44} color={THEME.white} />
+              </View>
+              <Text style={styles.successTitle}>Agendamento concluído!</Text>
+              <Text style={styles.successSub}>Você receberá os detalhes via WhatsApp.</Text>
+              <View style={styles.successCard}>
+                <Text style={styles.ticketService}>{booked.service}</Text>
+                <Text style={styles.ticketDate}>{booked.when}</Text>
+                <View style={styles.ticketDivider} />
+                <Text style={styles.ticketLabel}>Valor total</Text>
+                <Text style={styles.ticketPrice}>R$ {formatBRL(booked.total)}</Text>
+              </View>
+              <TouchableOpacity style={[styles.btnPrimary, { flex: 0, alignSelf: 'stretch' }]} onPress={goToMyAppointments}>
+                <Text style={styles.btnPrimaryText}>Ver meus agendamentos</Text>
+              </TouchableOpacity>
+              <Text style={styles.successHint}>Você será levada para seus agendamentos em instantes…</Text>
+            </View>
+          )}
+
           {/* --- MEUS AGENDAMENTOS (CLIENTE) --- */}
           {viewMode === 'myAppointments' && (
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -646,7 +842,7 @@ export default function App() {
 
               <TouchableOpacity
                 style={[styles.btnPrimary, { flex: 0, marginTop: 16 }]}
-                onPress={handleSearchMyAppointments}
+                onPress={() => handleSearchMyAppointments()}
                 disabled={myLoading}
               >
                 {myLoading ? (
@@ -681,8 +877,13 @@ export default function App() {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.adminClientTitle}>{appt.serviceName}</Text>
                         <Text style={styles.adminSubText}>
-                          {dateStr} • {timeStr} • R$ {appt.price.toFixed(2).replace('.', ',')}
+                          {dateStr} • {timeStr} • R$ {formatBRL(appt.price + (appt.travelFee ?? 0))}
                         </Text>
+                        {appt.travelFee ? (
+                          <Text style={styles.adminPhoneText}>
+                            Inclui deslocamento ({appt.distanceKm?.toFixed(1)} km): R$ {formatBRL(appt.travelFee)}
+                          </Text>
+                        ) : null}
                         {appt.clientAddress ? (
                           <Text style={styles.adminPhoneText}>Local: {appt.clientAddress}</Text>
                         ) : null}
@@ -715,6 +916,7 @@ export default function App() {
           {/* --- FLUXO CLIENTE --- */}
           {viewMode === 'client' && (
             <View style={{ flex: 1 }}>
+              <Stepper step={step} />
               <View style={styles.header}>
                 <Text style={styles.title}>
                   {step === 1 ? 'Serviços & Atendimentos' : 'Selecione o Horário'}
@@ -728,7 +930,7 @@ export default function App() {
 
               {step === 1 && (
                 loading ? (
-                  <ActivityIndicator size="large" color={THEME.roseDark} style={{ marginTop: 40 }} />
+                  <SkeletonList height={72} />
                 ) : (
                   <FlatList
                     data={services}
@@ -793,7 +995,7 @@ export default function App() {
 
                   <Text style={styles.sectionHeader}>2. Horários Livres</Text>
                   {loadingSlots ? (
-                    <ActivityIndicator size="small" color={THEME.roseDark} style={{ marginVertical: 14 }} />
+                    <SkeletonList height={44} />
                   ) : availableSlots.length === 0 ? (
                     <View style={styles.emptyContainer}>
                       <Ionicons name="calendar-clear-outline" size={22} color={THEME.textMuted} />
@@ -807,7 +1009,10 @@ export default function App() {
                           <TouchableOpacity
                             key={slot}
                             style={[styles.slotBadge, isSelected && styles.slotBadgeActive]}
-                            onPress={() => setSelectedSlot(slot)}
+                            onPress={() => {
+                              animateLayout();
+                              setSelectedSlot(slot);
+                            }}
                           >
                             <Text style={[styles.slotBadgeText, isSelected && styles.slotBadgeTextActive]}>
                               {slot}
@@ -840,20 +1045,70 @@ export default function App() {
                       maxLength={15}
                     />
 
+                    <Text style={[styles.inputLabel, { marginTop: 12 }]}>CEP</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={clientCep}
+                      onChangeText={handleCepChange}
+                      placeholder="00000-000"
+                      placeholderTextColor={THEME.textMuted}
+                      keyboardType="numeric"
+                      maxLength={9}
+                    />
+                    {feeLoading ? (
+                      <View style={styles.feeCard}>
+                        <ActivityIndicator size="small" color={THEME.roseDark} />
+                        <Text style={styles.feeCardText}>Calculando deslocamento…</Text>
+                      </View>
+                    ) : feeEstimate ? (
+                      <View style={styles.feeCard}>
+                        <Text style={styles.feeCardText}>
+                          {feeEstimate.travelFee === 0
+                            ? `✨ Deslocamento gratuito (${feeEstimate.distanceKm} km do ateliê)`
+                            : `🚗 Distância: ${feeEstimate.distanceKm} km • Taxa de deslocamento (ida e volta): R$ ${feeEstimate.travelFee.toFixed(2)}`}
+                        </Text>
+                      </View>
+                    ) : feeError ? (
+                      <Text style={styles.feeErrorText}>{feeError}</Text>
+                    ) : null}
+
                     <Text style={[styles.inputLabel, { marginTop: 12 }]}>Endereço do Atendimento</Text>
                     <TextInput
                       style={[styles.textInput, { height: 65, textAlignVertical: 'top' }]}
                       value={clientAddress}
                       onChangeText={setClientAddress}
-                      placeholder="Rua, Número, Bairro (Para cálculo de rota)"
+                      placeholder="Rua, Bairro"
                       placeholderTextColor={THEME.textMuted}
                       multiline
+                    />
+
+                    <Text style={[styles.inputLabel, { marginTop: 12 }]}>Número e Complemento</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={addressNumber}
+                      onChangeText={setAddressNumber}
+                      placeholder="Ex.: 123, apto 45"
+                      placeholderTextColor={THEME.textMuted}
                     />
                   </View>
 
                   <Text style={styles.sectionHeader}>4. Como você quer o serviço</Text>
                   <View style={styles.formCard}>
                     <Text style={styles.inputLabel}>Descrição *</Text>
+                    <View style={styles.moodRow}>
+                      {MOOD_TAGS.map((tag) => {
+                        const active = description.split(',').map((t) => t.trim()).includes(tag);
+                        return (
+                          <TouchableOpacity
+                            key={tag}
+                            style={[styles.moodChip, active && styles.moodChipActive]}
+                            onPress={() => toggleMoodTag(tag)}
+                          >
+                            <Text style={[styles.moodChipText, active && styles.moodChipTextActive]}>{tag}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                     <TextInput
                       style={[styles.textInput, { height: 100, textAlignVertical: 'top' }]}
                       value={description}
@@ -870,7 +1125,9 @@ export default function App() {
                     <View style={styles.imagesRow}>
                       {images.map((img, i) => (
                         <View key={img.uri} style={styles.thumbWrapper}>
-                          <Image source={{ uri: img.uri }} style={styles.thumb} />
+                          <TouchableOpacity activeOpacity={0.85} onPress={() => setLightbox({ uri: img.uri })}>
+                            <Image source={{ uri: img.uri }} style={styles.thumb} />
+                          </TouchableOpacity>
                           <TouchableOpacity
                             style={styles.thumbRemove}
                             onPress={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
@@ -888,6 +1145,40 @@ export default function App() {
                     </View>
                   </View>
 
+                  {selectedSlot && selectedService && (
+                    <View style={styles.ticket}>
+                      <View style={styles.ticketHead}>
+                        <Ionicons name="sparkles" size={18} color={THEME.roseDark} />
+                        <Text style={styles.ticketKicker}>Seu convite</Text>
+                        <Ionicons name="sparkles" size={18} color={THEME.roseDark} />
+                      </View>
+                      <Text style={styles.ticketService}>{selectedService.name}</Text>
+                      <Text style={styles.ticketDate}>
+                        {new Date(`${selectedDate}T12:00:00`).toLocaleDateString('pt-BR', {
+                          weekday: 'long',
+                          day: 'numeric',
+                          month: 'long',
+                        })}
+                      </Text>
+                      <View style={styles.ticketDivider} />
+                      <View style={styles.ticketFooter}>
+                        <View>
+                          <Text style={styles.ticketLabel}>Horário estimado</Text>
+                          <Text style={styles.ticketValue}>{formatEstimatedRange()}</Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={styles.ticketLabel}>{travelFeeValue > 0 ? 'Valor total' : 'Valor'}</Text>
+                          <Text style={styles.ticketPrice}>R$ {formatBRL(selectedService.price + travelFeeValue)}</Text>
+                          {travelFeeValue > 0 ? (
+                            <Text style={styles.ticketLabel}>
+                              Serviço R$ {formatBRL(selectedService.price)} + deslocamento R$ {formatBRL(travelFeeValue)}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
                   <Text style={styles.disclaimerText}>
                     * O valor final pode sofrer acréscimo de taxa de deslocamento dependendo da região.
                   </Text>
@@ -895,7 +1186,10 @@ export default function App() {
                   <View style={styles.actionButtons}>
                     <TouchableOpacity
                       style={styles.btnSecondary}
-                      onPress={() => setStep(1)}
+                      onPress={() => {
+                        animateLayout();
+                        setStep(1);
+                      }}
                       disabled={loading}
                     >
                       <Text style={styles.btnSecondaryText}>Voltar</Text>
@@ -928,7 +1222,10 @@ export default function App() {
 
               <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
                 {!showBlockForm ? (
-                  <TouchableOpacity style={styles.btnPrimary} onPress={() => setShowBlockForm(true)}>
+                  <TouchableOpacity style={styles.btnPrimary} onPress={() => {
+                    animateLayout();
+                    setShowBlockForm(true);
+                  }}>
                     <Text style={styles.btnPrimaryText}>Bloquear Agenda</Text>
                   </TouchableOpacity>
                 ) : (
@@ -988,7 +1285,10 @@ export default function App() {
                     />
 
                     <View style={styles.actionButtons}>
-                      <TouchableOpacity style={styles.btnSecondary} onPress={() => setShowBlockForm(false)}>
+                      <TouchableOpacity style={styles.btnSecondary} onPress={() => {
+                        animateLayout();
+                        setShowBlockForm(false);
+                      }}>
                         <Text style={styles.btnSecondaryText}>Cancelar</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.btnPrimary} onPress={handleBlockDay}>
@@ -1021,7 +1321,7 @@ export default function App() {
               </View>
 
               {loadingAdmin ? (
-                <ActivityIndicator size="large" color={THEME.roseDark} style={{ marginTop: 20 }} />
+                <SkeletonList height={80} />
               ) : (
                 <FlatList
                   data={appointmentsList}
@@ -1065,21 +1365,29 @@ export default function App() {
                           {item.clientAddress ? (
                             <Text style={styles.adminPhoneText}>Local: {item.clientAddress}</Text>
                           ) : null}
+                          {item.travelFee != null && item.distanceKm != null ? (
+                            <Text style={styles.adminPhoneText}>
+                              {item.travelFee > 0
+                                ? `🚗 ${item.distanceKm.toFixed(1)} km • Deslocamento: R$ ${formatBRL(item.travelFee)} • Total: R$ ${formatBRL((item.serviceItem?.price ?? 0) + item.travelFee)}`
+                                : `✨ ${item.distanceKm.toFixed(1)} km • Deslocamento gratuito`}
+                            </Text>
+                          ) : null}
                           {item.description ? (
                             <Text style={styles.adminPhoneText}>Pedido: {item.description}</Text>
                           ) : null}
                           {item.referenceImages && item.referenceImages.length > 0 && adminToken ? (
                             <View style={[styles.imagesRow, { marginTop: 6 }]}>
-                              {item.referenceImages.map((name) => (
-                                <Image
-                                  key={name}
-                                  source={{
-                                    uri: `${api.defaults.baseURL}/appointments/images/${name}`,
-                                    headers: { Authorization: `Bearer ${adminToken}` },
-                                  }}
-                                  style={styles.thumb}
-                                />
-                              ))}
+                              {item.referenceImages.map((name) => {
+                                const source = {
+                                  uri: `${api.defaults.baseURL}/appointments/images/${name}`,
+                                  headers: { Authorization: `Bearer ${adminToken}` },
+                                };
+                                return (
+                                  <TouchableOpacity key={name} activeOpacity={0.85} onPress={() => setLightbox(source)}>
+                                    <Image source={source} style={styles.thumb} />
+                                  </TouchableOpacity>
+                                );
+                              })}
                             </View>
                           ) : null}
                           {isBlocked && (
@@ -1131,6 +1439,15 @@ export default function App() {
           )}
         </View>
       </ImageBackground>
+
+      <Modal visible={!!lightbox} transparent animationType="fade" onRequestClose={() => setLightbox(null)}>
+        <View style={styles.lightbox}>
+          {lightbox && <Image source={lightbox} style={styles.lightboxImage} resizeMode="contain" />}
+          <TouchableOpacity style={styles.lightboxClose} onPress={() => setLightbox(null)}>
+            <Ionicons name="close" size={26} color={THEME.white} />
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1449,6 +1766,41 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: THEME.roseDark,
   },
+  successWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
+  successIcon: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: THEME.rose,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successTitle: { fontSize: 26, fontWeight: '600', color: THEME.text, marginTop: 8, textAlign: 'center' },
+  successSub: { fontSize: 14, color: THEME.textLight, textAlign: 'center' },
+  successCard: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    padding: 20,
+    marginVertical: 8,
+    borderRadius: 16,
+    backgroundColor: THEME.white,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  successHint: { fontSize: 12, color: THEME.textMuted, textAlign: 'center' },
+  feeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: THEME.cream,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  feeCardText: { flex: 1, fontSize: 13, color: THEME.roseDark, fontWeight: '500' },
+  feeErrorText: { marginTop: 8, fontSize: 12, color: '#b05050' },
   disclaimerText: {
     fontSize: 11,
     color: THEME.textMuted,
@@ -1608,6 +1960,96 @@ const styles = StyleSheet.create({
     borderColor: THEME.border,
     paddingVertical: 14,
     borderRadius: 10,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 16,
+  },
+  stepItem: { alignItems: 'center', gap: 4, width: 90 },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.rose,
+    backgroundColor: THEME.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepDotActive: { backgroundColor: THEME.roseDark, borderColor: THEME.roseDark },
+  stepDotText: { fontSize: 12, fontWeight: '600', color: THEME.white },
+  stepLabel: { fontSize: 10, letterSpacing: 0.8, textTransform: 'uppercase', color: THEME.textMuted, textAlign: 'center' },
+  stepLabelActive: { color: THEME.roseDark, fontWeight: '600' },
+  stepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: THEME.roseLight,
+    marginBottom: 18,
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  stepLineFill: { height: 2, backgroundColor: THEME.roseDark },
+  moodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  moodChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: THEME.rose,
+    backgroundColor: THEME.cream,
+  },
+  moodChipActive: { backgroundColor: THEME.roseDark, borderColor: THEME.roseDark },
+  moodChipText: { fontSize: 12, color: THEME.roseDark },
+  moodChipTextActive: { color: THEME.white, fontWeight: '600' },
+  ticket: {
+    marginTop: 20,
+    backgroundColor: THEME.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: THEME.rose,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  ticketHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ticketKicker: { fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: THEME.roseDark },
+  ticketService: {
+    fontFamily: 'CormorantGaramond_400Regular',
+    fontSize: 26,
+    color: THEME.text,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  ticketDate: { fontSize: 14, color: THEME.textLight, marginTop: 4, textTransform: 'capitalize', textAlign: 'center' },
+  ticketDivider: {
+    alignSelf: 'stretch',
+    marginVertical: 16,
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: THEME.rose,
+  },
+  ticketFooter: { flexDirection: 'row', justifyContent: 'space-between', alignSelf: 'stretch' },
+  ticketLabel: { fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: THEME.textMuted },
+  ticketValue: { fontSize: 15, fontWeight: '500', color: THEME.text, marginTop: 2 },
+  ticketPrice: { fontSize: 22, fontWeight: '600', color: THEME.roseDark, marginTop: 2 },
+  lightbox: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
+  lightboxImage: { width: '100%', height: '85%' },
+  lightboxClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   welcomeBtnOutlineText: {
     color: THEME.roseDark,

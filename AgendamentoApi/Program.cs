@@ -40,6 +40,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.AddPolicy("login", ctx => PerIp(ctx, 5, TimeSpan.FromMinutes(1)));
     options.AddPolicy("lookup", ctx => PerIp(ctx, 10, TimeSpan.FromMinutes(1)));
+    options.AddPolicy("estimate", ctx => PerIp(ctx, 15, TimeSpan.FromMinutes(1)));
     options.AddPolicy("create", ctx => PerIp(ctx, 10, TimeSpan.FromMinutes(10)));
 });
 
@@ -78,6 +79,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 // Registro dos serviços externos (WhatsApp com HttpClient gerenciado pelo .NET)
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
+builder.Services.AddHttpClient<ITravelFeeService, TravelFeeService>();
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 
 var app = builder.Build();

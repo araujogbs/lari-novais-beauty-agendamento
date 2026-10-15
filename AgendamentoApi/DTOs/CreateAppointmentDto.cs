@@ -12,6 +12,9 @@ public class CreateAppointmentDto
 
     public string? ClientAddress { get; set; }
 
+    // Opcional: quando informado, a taxa de deslocamento é recalculada no servidor
+    public string? Cep { get; set; }
+
     [Required(AllowEmptyStrings = false, ErrorMessage = "A descrição do serviço é obrigatória")]
     [StringLength(1000, ErrorMessage = "A descrição pode ter no máximo 1000 caracteres")]
     public string Description { get; set; } = string.Empty;

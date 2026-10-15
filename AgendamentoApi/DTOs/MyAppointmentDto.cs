@@ -11,6 +11,8 @@ public class MyAppointmentDto
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public string? ClientAddress { get; set; }
+    public decimal? TravelFee { get; set; }
+    public double? DistanceKm { get; set; }
     public string Status { get; set; } = string.Empty;
 }
 

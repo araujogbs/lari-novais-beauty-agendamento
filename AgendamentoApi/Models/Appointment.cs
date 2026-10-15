@@ -12,6 +12,9 @@ public class Appointment
 
     // Como a cliente quer o serviço + fotos de referência (nomes dos arquivos em uploads/)
     public string? Description { get; set; }
+    // Taxa de deslocamento calculada pelo CEP no momento do agendamento
+    public decimal? TravelFee { get; set; }
+    public double? DistanceKm { get; set; }
     public List<string> ReferenceImages { get; set; } = new();
 
     // Chave estrangeira para o serviço

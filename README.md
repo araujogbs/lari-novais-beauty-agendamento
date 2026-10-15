@@ -28,10 +28,12 @@ Sistema completo de agendamento para uma maquiadora que atende a domicílio: a *
 ### Cliente
 - **Escolha do serviço**, com duração e preço.
 - **Calendário em português** e horários livres calculados na hora, em blocos de 30 minutos.
-- **Dados do atendimento:** nome, WhatsApp (com máscara) e endereço.
+- **Dados do atendimento:** nome, WhatsApp (com máscara), **CEP** (máscara `00000-000`), endereço e número/complemento.
+- **Taxa de deslocamento automática:** ao digitar o CEP, o app preenche rua e bairro e mostra a distância até o ateliê e a taxa (ou "deslocamento gratuito"). A taxa é somada ao valor total.
 - **Descrição obrigatória** de como a cliente quer o serviço.
 - **Fotos de referência opcionais:** até 5 imagens (JPG, PNG ou WebP, 5 MB cada), com miniaturas e botão para remover.
 - **Meus Agendamentos:** a cliente digita o WhatsApp, vê os agendamentos futuros confirmados e pode cancelar (com pelo menos 24 h de antecedência).
+- **Tela de agendamento concluído:** ao confirmar, a cliente vê o resumo e é levada (botão ou automaticamente após 6 s) para "Meus Agendamentos", já com o telefone preenchido.
 
 ### Maquiadora (Painel Ateliê)
 Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha).
@@ -44,7 +46,7 @@ Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, segu
 
 ### Automações
 - Confirmação por **WhatsApp** após o agendamento.
-- Criação do evento no **Google Calendar** com nome, telefone, endereço, descrição, quantidade de fotos e valor.
+- Criação do evento no **Google Calendar** com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
 
@@ -88,6 +90,11 @@ AgendamentoAPI/
 - Duração do atendimento vem do serviço; o fim é calculado como `início + duração`.
 - **Descrição** é obrigatória (até 1000 caracteres); **fotos** são opcionais (máx. 5, 5 MB cada).
 - **Cancelamento pela cliente:** só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
+- **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
+  - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 3,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
+  - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
+  - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
+  - O `POST /appointments` recalcula a taxa a partir do `cep`; o valor enviado pelo app nunca é confiado.
 - Status usados: `Confirmed`, `Cancelled`, `Blocked`.
 
 ---
@@ -113,13 +120,15 @@ AgendamentoAPI/
 | ClientPhone | string | WhatsApp, salvo com máscara |
 | ClientAddress | string? | Endereço do atendimento |
 | Description | string? | Como a cliente quer o serviço |
+| TravelFee | decimal? | Taxa de deslocamento (ida e volta) calculada pelo CEP |
+| DistanceKm | double? | Distância até o ateliê, em km |
 | ReferenceImages | text[] | Nomes dos arquivos em `uploads/` |
 | ServiceItemId | int | FK para o serviço |
 | StartTime / EndTime | timestamptz | UTC |
 | Status | string | `Confirmed`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations:** criação das tabelas, endereço, `ClientAddress` opcional, constraint anti-sobreposição e `Description`/`ReferenceImages`.
+**Migrations:** criação das tabelas, endereço, `ClientAddress` opcional, constraint anti-sobreposição, `Description`/`ReferenceImages` e `TravelFee`/`DistanceKm` (`AdicionarTaxaDeslocamento`).
 
 ---
 
@@ -143,7 +152,8 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
 | GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1` | Público | Horários livres (`["09:00","09:30",...]`) |
-| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
 | GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
@@ -175,6 +185,7 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `Admin:PasswordHash` | Sim | Hash da senha no formato do ASP.NET Identity (`PasswordHasher`). Nunca a senha em texto |
 | `WhatsApp:ApiUrl` / `WhatsApp:ApiKey` | Não | Sem isso, a mensagem só aparece no log (simulação) |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
+| `TravelFee:*` | Não | Já em `appsettings.json`: `OriginAddress`, `OriginCep`, `OriginLatitude`/`OriginLongitude`, `FreeRadiusKm` (5.0) e `PricePerKm` (3.00) |
 | `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
 
 ```bash
@@ -265,6 +276,7 @@ Já implementado:
 
 - **"Meus Agendamentos" usa só o telefone como prova de identidade.** O limite por IP dificulta, mas não impede, que alguém que saiba o WhatsApp de uma cliente veja e cancele os agendamentos dela. Para endurecer de vez: código de verificação por SMS/WhatsApp.
 - **Em produção**, defina `Cors:AllowedOrigins` (se houver cliente web) e publique atrás de HTTPS (o redirecionamento exige que o servidor ou proxy exponha a porta HTTPS). Atrás de proxy reverso, configure `ForwardedHeaders` para o limite por IP enxergar o IP real da cliente.
+- O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
 - O texto da confirmação por WhatsApp pede para "responder esta mensagem" para desmarcar; vale atualizá-lo para citar o app (**Meus Agendamentos**).
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.

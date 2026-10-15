@@ -43,17 +43,36 @@ public class AppointmentsController : ControllerBase
     private readonly string _uploadsDir;
     private readonly IWhatsAppService _whatsAppService;
     private readonly IGoogleCalendarService _calendarService; // Novo campo
+    private readonly ITravelFeeService _travelFeeService;
 
     public AppointmentsController(
         AppDbContext context,
         IWhatsAppService whatsAppService,
         IGoogleCalendarService calendarService, // Injetado aqui
+        ITravelFeeService travelFeeService,
         IWebHostEnvironment env)
     {
         _context = context;
         _uploadsDir = Path.Combine(env.ContentRootPath, "uploads");
         _whatsAppService = whatsAppService;
         _calendarService = calendarService;
+        _travelFeeService = travelFeeService;
+    }
+
+    // GET: api/appointments/estimate-fee?cep=01310100 (público)
+    [HttpGet("estimate-fee")]
+    [EnableRateLimiting("estimate")]
+    public async Task<IActionResult> EstimateFee([FromQuery] string? cep, CancellationToken ct)
+    {
+        var digits = new string((cep ?? string.Empty).Where(char.IsDigit).ToArray());
+        if (digits.Length != 8)
+            return BadRequest(new { message = "Informe um CEP válido com 8 dígitos." });
+
+        var r = await _travelFeeService.EstimateAsync(digits, ct);
+        if (r == null)
+            return NotFound(new { message = "CEP não encontrado ou fora da área de cobertura." });
+
+        return Ok(new { cep = r.Cep, street = r.Street, neighborhood = r.Neighborhood, city = r.City, distanceKm = r.DistanceKm, travelFee = r.TravelFee });
     }
 
     // GET: api/appointments?date=2026-10-01 (Lista agendamentos de uma data específica)
@@ -133,6 +152,13 @@ public class AppointmentsController : ControllerBase
             return Conflict(new { message = "O horário selecionado já se encontra ocupado. Escolha outro intervalo." }); // HTTP 409
         }
 
+        // 3.1 Taxa de deslocamento (recalculada no servidor; nunca confia no valor do cliente)
+        TravelFeeResult? fee = null;
+        if (!string.IsNullOrWhiteSpace(dto.Cep))
+        {
+            fee = await _travelFeeService.EstimateAsync(dto.Cep);
+        }
+
         // 4. Gravar as imagens e o agendamento
         var savedImages = new List<string>();
         Directory.CreateDirectory(_uploadsDir);
@@ -151,6 +177,8 @@ public class AppointmentsController : ControllerBase
             ClientAddress = dto.ClientAddress,
             Description = dto.Description.Trim(),
             ReferenceImages = savedImages,
+            TravelFee = fee?.TravelFee,
+            DistanceKm = fee?.DistanceKm,
             ServiceItemId = dto.ServiceItemId,
             StartTime = startTimeUtc,
             EndTime = endTimeUtc,
@@ -179,7 +207,8 @@ _context.Appointments.Add(appointment);
 
         // 2. Criação automática no Google Calendar
  var eventTitle = $"{service.Name} - {appointment.ClientName}";
-        var eventDescription = $"Cliente: {appointment.ClientName}\nWhatsApp: {appointment.ClientPhone}\nEndereço: {appointment.ClientAddress}\nDescrição: {appointment.Description}\nFotos de referência: {appointment.ReferenceImages.Count}\nValor: R$ {service.Price:F2}";
+        var eventDescription = $"Cliente: {appointment.ClientName}\nWhatsApp: {appointment.ClientPhone}\nEndereço: {appointment.ClientAddress}\nDescrição: {appointment.Description}\nFotos de referência: {appointment.ReferenceImages.Count}\nValor: R$ {service.Price:F2}" +
+            (appointment.TravelFee is decimal tf ? $"\nDeslocamento: {appointment.DistanceKm:F1} km • R$ {tf:F2}" : "");
 
         await _calendarService.CreateEventAsync(
             eventTitle,
@@ -228,6 +257,8 @@ _context.Appointments.Add(appointment);
                 StartTime = a.StartTime,
                 EndTime = a.EndTime,
                 ClientAddress = a.ClientAddress,
+                TravelFee = a.TravelFee,
+                DistanceKm = a.DistanceKm,
                 Status = a.Status
             })
             .ToList();
