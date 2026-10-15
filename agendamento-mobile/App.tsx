@@ -15,6 +15,7 @@ import {
   ImageBackground,
   Image,
   Platform,
+  Linking,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
@@ -65,6 +66,16 @@ interface AppointmentItem {
   referenceImages?: string[];
 }
 
+interface MyAppointment {
+  id: number;
+  serviceName: string;
+  price: number;
+  startTime: string;
+  endTime: string;
+  clientAddress?: string;
+  status: string;
+}
+
 const MAX_IMAGES = 5;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -76,7 +87,7 @@ export default function App() {
   });
 
   // Atualize esta linha:
-  const [viewMode, setViewMode] = useState<'welcome' | 'client' | 'adminLogin' | 'admin'>('welcome');
+  const [viewMode, setViewMode] = useState<'welcome' | 'client' | 'adminLogin' | 'admin' | 'myAppointments'>('welcome');
 
   // Estados de autenticação
   const [adminUsername, setAdminUsername] = useState('');
@@ -115,6 +126,13 @@ export default function App() {
   const [clientAddress, setClientAddress] = useState('');
   const [description, setDescription] = useState('');
   const [images, setImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
+
+  // Estados de "Meus Agendamentos" (cliente)
+  const [myPhone, setMyPhone] = useState('');
+  const [myAppointments, setMyAppointments] = useState<MyAppointment[]>([]);
+  const [myLoading, setMyLoading] = useState(false);
+  const [mySearched, setMySearched] = useState(false);
+  const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
 
   // Estados da Administração
   const [adminToken, setAdminToken] = useState<string | null>(null); // para carregar as fotos (rota protegida)
@@ -254,7 +272,7 @@ export default function App() {
     fetchAvailableSlots(service.id, selectedDate);
   };
 
-  const handlePhoneChange = (text: string) => {
+  const formatPhone = (text: string) => {
     const raw = text.replace(/\D/g, '');
     let formatted = raw;
     if (raw.length > 2) {
@@ -263,7 +281,58 @@ export default function App() {
     if (raw.length > 7) {
       formatted = `(${raw.slice(0, 2)}) ${raw.slice(2, 7)}-${raw.slice(7, 11)}`;
     }
-    setClientPhone(formatted);
+    return formatted;
+  };
+
+  const handlePhoneChange = (text: string) => setClientPhone(formatPhone(text));
+
+  // Atalhos do painel admin
+  const openWhatsApp = (item: AppointmentItem) => {
+    let phone = item.clientPhone.replace(/\D/g, '');
+    if (phone.length <= 11) phone = `55${phone}`; // sem DDI
+    const text = `Olá ${item.clientName}, tudo bem? Passando para confirmar seu atendimento de ${item.serviceItem?.name}.`;
+    Linking.openURL(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`).catch(() =>
+      notify('Erro', 'Não foi possível abrir o WhatsApp.'),
+    );
+  };
+
+  const openMap = (address: string) => {
+    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`).catch(() =>
+      notify('Erro', 'Não foi possível abrir o mapa.'),
+    );
+  };
+
+  // Meus Agendamentos
+  const handleSearchMyAppointments = async () => {
+    if (myPhone.replace(/\D/g, '').length < 10) {
+      notify('Atenção', 'Informe um WhatsApp válido.');
+      return;
+    }
+    try {
+      setMyLoading(true);
+      setConfirmCancelId(null);
+      const response = await api.get<MyAppointment[]>('/appointments/my-appointments', {
+        params: { phone: myPhone },
+      });
+      setMyAppointments(response.data);
+      setMySearched(true);
+    } catch (error: any) {
+      notify('Erro', getErrorMessage(error, 'Não foi possível buscar seus agendamentos.'));
+    } finally {
+      setMyLoading(false);
+    }
+  };
+
+  const handleClientCancel = async (id: number) => {
+    try {
+      await api.post(`/appointments/${id}/client-cancel`, { phone: myPhone });
+      notify('Sucesso', 'Agendamento cancelado com sucesso.', 'success');
+      setConfirmCancelId(null);
+      handleSearchMyAppointments();
+    } catch (error: any) {
+      setConfirmCancelId(null);
+      notify('Não foi possível cancelar', getErrorMessage(error, 'Falha ao cancelar o agendamento.'), 'error');
+    }
   };
 
   const handlePickImages = async () => {
@@ -538,8 +607,109 @@ export default function App() {
                   <Ionicons name="sparkles" size={18} color={THEME.white} />
                   <Text style={styles.welcomeBtnPrimaryText}>Agendar Meu Horário</Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.welcomeBtnOutline}
+                  onPress={() => {
+                    setMySearched(false);
+                    setMyAppointments([]);
+                    setViewMode('myAppointments');
+                  }}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={THEME.roseDark} />
+                  <Text style={styles.welcomeBtnOutlineText}>Meus Agendamentos</Text>
+                </TouchableOpacity>
               </View>
             </View>
+          )}
+
+          {/* --- MEUS AGENDAMENTOS (CLIENTE) --- */}
+          {viewMode === 'myAppointments' && (
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.header}>
+                <Text style={styles.title}>Meus Agendamentos</Text>
+                <Text style={styles.subtitle}>Consulte ou cancele usando seu WhatsApp</Text>
+              </View>
+
+              <View style={styles.formCard}>
+                <Text style={styles.inputLabel}>WhatsApp</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={myPhone}
+                  onChangeText={(t) => setMyPhone(formatPhone(t))}
+                  placeholder="(11) 99999-9999"
+                  placeholderTextColor={THEME.textMuted}
+                  keyboardType="numeric"
+                  maxLength={15}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.btnPrimary, { flex: 0, marginTop: 16 }]}
+                onPress={handleSearchMyAppointments}
+                disabled={myLoading}
+              >
+                {myLoading ? (
+                  <ActivityIndicator color={THEME.white} />
+                ) : (
+                  <Text style={styles.btnPrimaryText}>Buscar</Text>
+                )}
+              </TouchableOpacity>
+
+              {mySearched && myAppointments.length === 0 && (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>Nenhum agendamento futuro para este número.</Text>
+                </View>
+              )}
+
+              <View style={{ marginTop: 16 }}>
+                {myAppointments.map((appt) => {
+                  const start = new Date(appt.startTime);
+                  const dateStr = start.toLocaleDateString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: '2-digit',
+                  });
+                  const timeStr = start.toLocaleTimeString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
+                  return (
+                    <View key={appt.id} style={styles.adminCard}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.adminClientTitle}>{appt.serviceName}</Text>
+                        <Text style={styles.adminSubText}>
+                          {dateStr} • {timeStr} • R$ {appt.price.toFixed(2).replace('.', ',')}
+                        </Text>
+                        {appt.clientAddress ? (
+                          <Text style={styles.adminPhoneText}>Local: {appt.clientAddress}</Text>
+                        ) : null}
+                      </View>
+
+                      {confirmCancelId === appt.id ? (
+                        <View style={{ gap: 6 }}>
+                          <TouchableOpacity style={styles.cancelAction} onPress={() => handleClientCancel(appt.id)}>
+                            <Text style={styles.cancelActionText}>Confirmar</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.cancelAction, { backgroundColor: THEME.cream }]}
+                            onPress={() => setConfirmCancelId(null)}
+                          >
+                            <Text style={[styles.cancelActionText, { color: THEME.textLight }]}>Voltar</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <TouchableOpacity style={styles.cancelAction} onPress={() => setConfirmCancelId(appt.id)}>
+                          <Text style={styles.cancelActionText}>Cancelar</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
           )}
 
           {/* --- FLUXO CLIENTE --- */}
@@ -922,6 +1092,19 @@ export default function App() {
                           </Text>
                         </View>
 
+                        {!isBlocked && (
+                          <View style={styles.quickActions}>
+                            <TouchableOpacity style={styles.quickBtn} onPress={() => openWhatsApp(item)}>
+                              <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
+                            </TouchableOpacity>
+                            {item.clientAddress ? (
+                              <TouchableOpacity style={styles.quickBtn} onPress={() => openMap(item.clientAddress!)}>
+                                <Ionicons name="location-outline" size={18} color={THEME.roseDark} />
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        )}
+
                         {!isCancelled && !isBlocked && (
                           <TouchableOpacity
                             style={styles.cancelAction}
@@ -1209,6 +1392,21 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: THEME.text,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    gap: 6,
+    marginRight: 8,
+  },
+  quickBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: THEME.cream,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   imagesRow: {
     flexDirection: 'row',

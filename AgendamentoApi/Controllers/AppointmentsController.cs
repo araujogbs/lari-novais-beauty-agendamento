@@ -189,6 +189,74 @@ _context.Appointments.Add(appointment);
     }
 
 
+    // Só os dígitos; tira o DDI 55 quando o número vem completo (13 dígitos) para comparar com o salvo
+    private static string NormalizePhone(string? phone)
+    {
+        var digits = new string((phone ?? string.Empty).Where(char.IsDigit).ToArray());
+        return digits.Length > 11 && digits.StartsWith("55") ? digits[2..] : digits;
+    }
+
+    // GET: api/appointments/my-appointments?phone=(11) 99999-9999 (público)
+    [HttpGet("my-appointments")]
+    public async Task<ActionResult<IEnumerable<MyAppointmentDto>>> GetMyAppointments([FromQuery] string? phone)
+    {
+        var wanted = NormalizePhone(phone);
+        if (wanted.Length < 10)
+        {
+            return BadRequest(new { message = "Informe um WhatsApp válido." });
+        }
+
+        // Telefones são salvos com máscara; a comparação por dígitos é feita em memória
+        // sobre os futuros confirmados (conjunto pequeno).
+        var now = DateTime.UtcNow;
+        var future = await _context.Appointments
+            .Include(a => a.ServiceItem)
+            .Where(a => a.Status == "Confirmed" && a.StartTime >= now)
+            .OrderBy(a => a.StartTime)
+            .ToListAsync();
+
+        var result = future
+            .Where(a => NormalizePhone(a.ClientPhone) == wanted)
+            .Select(a => new MyAppointmentDto
+            {
+                Id = a.Id,
+                ServiceName = a.ServiceItem?.Name ?? "Serviço",
+                Price = a.ServiceItem?.Price ?? 0,
+                StartTime = a.StartTime,
+                EndTime = a.EndTime,
+                ClientAddress = a.ClientAddress,
+                Status = a.Status
+            })
+            .ToList();
+
+        return Ok(result);
+    }
+
+    // POST: api/appointments/5/client-cancel (público; exige o telefone do agendamento)
+    [HttpPost("{id}/client-cancel")]
+    public async Task<IActionResult> ClientCancel(int id, [FromBody] ClientCancelDto dto)
+    {
+        var appointment = await _context.Appointments.FindAsync(id);
+
+        // Mesma resposta para "não existe" e "telefone não confere", para não revelar agendamentos de terceiros
+        if (appointment == null ||
+            appointment.Status != "Confirmed" ||
+            NormalizePhone(appointment.ClientPhone) != NormalizePhone(dto.Phone))
+        {
+            return NotFound(new { message = "Agendamento não encontrado para este telefone." });
+        }
+
+        if (appointment.StartTime <= DateTime.UtcNow.AddHours(24))
+        {
+            return BadRequest(new { message = "Cancelamentos com menos de 24 horas de antecedência devem ser feitos pelo WhatsApp." });
+        }
+
+        appointment.Status = "Cancelled";
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
     // GET: api/appointments/images/{fileName} (somente a maquiadora vê as fotos das clientes)
     [HttpGet("images/{fileName}")]
     [Authorize(Roles = "Admin")]
