@@ -16,7 +16,7 @@ public class WhatsAppService : IWhatsAppService
         _logger = logger;
     }
 
-    public async Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime)
+    public async Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime readyTime)
     {
         var apiUrl = _configuration["WhatsApp:ApiUrl"];
         var apiKey = _configuration["WhatsApp:ApiKey"];
@@ -27,7 +27,9 @@ public class WhatsAppService : IWhatsAppService
         // Mensagem formatada e profissional para a cliente
         var messageText = $"Olá {clientName}! ✨\n\n" +
                           $"O seu agendamento para *{serviceName}* foi confirmado com sucesso!\n" +
-                          $"📅 Data e Hora: {startTime:dd/MM/yyyy às HH:mm}\n\n" +
+                          $"📅 Data: {startTime:dd/MM/yyyy}\n" +
+                          $"🕘 Início do atendimento: {startTime:HH:mm}\n" +
+                          $"✅ Você estará pronta às {readyTime:HH:mm}\n\n" +
                           $"Se precisar de desmarcar ou tiver alguma dúvida, por favor responda a esta mensagem. Até breve!";
 
         // Se ainda não tiver as credenciais preenchidas, apenas regista no log para testes locais

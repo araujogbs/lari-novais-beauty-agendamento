@@ -7,7 +7,9 @@ public class MyAppointmentDto
 {
     public int Id { get; set; }
     public string ServiceName { get; set; } = string.Empty;
+    // Valor total do serviço (preço unitário x pessoas), sem o deslocamento
     public decimal Price { get; set; }
+    public int People { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public string? ClientAddress { get; set; }

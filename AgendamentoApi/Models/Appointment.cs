@@ -19,6 +19,9 @@ public class Appointment
 
     // Chave estrangeira para o serviço
     public int ServiceItemId { get; set; }
+
+    // Para quantas pessoas o serviço foi contratado (valor e duração são multiplicados por este número)
+    public int People { get; set; } = 1;
     public ServiceItem? ServiceItem { get; set; } // Propriedade de navegação do EF Core
 
     // Horários do atendimento

@@ -16,4 +16,10 @@ public class AppDbContext : DbContext
 
 // Nova tabela de agendamentos
     public DbSet<Appointment> Appointments { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Agendamentos antigos (anteriores à quantidade de pessoas) valem para 1 pessoa
+        modelBuilder.Entity<Appointment>().Property(a => a.People).HasDefaultValue(1);
+    }
 }

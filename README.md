@@ -81,13 +81,14 @@ AgendamentoAPI/
 
 ## Regras de negócio
 
-- **Expediente:** 09:00 às 18:00, fuso de Brasília (`America/Sao_Paulo`). Tudo é gravado em **UTC** no banco e convertido na entrada e na saída.
+- **Expediente:** 06:00 às 22:00, fuso de Brasília (`America/Sao_Paulo`). Tudo é gravado em **UTC** no banco e convertido na entrada e na saída.
 - **Sem sobreposição de horários.** A regra é garantida em duas camadas:
   1. consulta no código (`InicioNovo < FimExistente` e `FimNovo > InicioExistente`);
   2. **constraint de exclusão do PostgreSQL** (`no_overlapping_appointments`, índice GiST com `tstzrange`), que impede conflito mesmo com duas marcações simultâneas. Nesse caso a API responde `409`.
 - Agendamentos **cancelados** não ocupam horário.
 - **Bloqueios** são gravados como agendamentos de status `Blocked`, então os horários somem da lista de livres automaticamente. Só é possível bloquear onde não há agendamento.
-- Duração do atendimento vem do serviço; o fim é calculado como `início + duração`.
+- **A cliente escolhe a hora em que precisa estar pronta** (`readyTime`), que vira o `EndTime`. O servidor calcula o início voltando a duração total: `início = readyTime − duração do serviço × pessoas`. O atendimento inteiro precisa caber no expediente (se o início cair antes das 06:00 ou o fim depois das 22:00, a API responde `400`).
+- **Quantidade de pessoas (`People`):** o valor do serviço e a duração são multiplicados pelo número de pessoas; a taxa de deslocamento não.
 - **Descrição** é obrigatória (até 1000 caracteres); **fotos** são opcionais (máx. 5, 5 MB cada).
 - **Cancelamento pela cliente:** só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
 - **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
@@ -124,11 +125,14 @@ AgendamentoAPI/
 | DistanceKm | double? | Distância até o ateliê, em km |
 | ReferenceImages | text[] | Nomes dos arquivos em `uploads/` |
 | ServiceItemId | int | FK para o serviço |
-| StartTime / EndTime | timestamptz | UTC |
+| People | int | Para quantas pessoas é o serviço (padrão 1) |
+| StartTime / EndTime | timestamptz | UTC. `EndTime` é a hora em que a cliente fica pronta; `StartTime` é calculado |
 | Status | string | `Confirmed`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations:** criação das tabelas, endereço, `ClientAddress` opcional, constraint anti-sobreposição, `Description`/`ReferenceImages` e `TravelFee`/`DistanceKm` (`AdicionarTaxaDeslocamento`).
+**Migrations:** criação das tabelas, endereço, `ClientAddress` opcional, constraint anti-sobreposição, `Description`/`ReferenceImages` `TravelFee`/`DistanceKm` (`AdicionarTaxaDeslocamento`) e `People` (`AdicionarQuantidadePessoas`).
+
+A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social (Maquiagem R$ 350, Penteado R$ 350 com 90 min, Maquiagem + Penteado R$ 700 com 150 min, Escova e Babyliss R$ 300).
 
 ---
 
@@ -151,8 +155,8 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1` | Público | Horários livres (`["09:00","09:30",...]`) |
-| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários em que a cliente pode **estar pronta** (`["10:00","10:30",...]`), já descontando a duração total (serviço × pessoas). `people` é opcional (padrão 1, máx. 20) |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `readyTime` (ISO 8601 com offset/UTC: hora em que ela precisa estar pronta), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
 | GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |

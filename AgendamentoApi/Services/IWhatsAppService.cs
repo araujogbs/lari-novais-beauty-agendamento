@@ -2,6 +2,6 @@ namespace AgendamentoApi.Services;
 
 public interface IWhatsAppService
 {
-    Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime);
+    Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime readyTime);
 }
 

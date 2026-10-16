@@ -14,8 +14,8 @@ namespace AgendamentoApi.Controllers;
 [Route("api/[controller]")]
 public class AppointmentsController : ControllerBase
 {
-    private static readonly TimeSpan WorkStart = new(9, 0, 0);
-    private static readonly TimeSpan WorkEnd = new(18, 0, 0);
+    private static readonly TimeSpan WorkStart = new(6, 0, 0);
+    private static readonly TimeSpan WorkEnd = new(22, 0, 0);
     private static readonly TimeZoneInfo BrazilTz = ResolveBrazilTimeZone();
 
     private static TimeZoneInfo ResolveBrazilTimeZone()
@@ -34,6 +34,19 @@ public class AppointmentsController : ControllerBase
         TimeZoneInfo.ConvertTimeToUtc(
             DateTime.SpecifyKind(date.Date + time, DateTimeKind.Unspecified), BrazilTz);
 
+    private static DateTime ToBrazil(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), BrazilTz);
+
+    // O atendimento inteiro (início e fim) precisa estar no mesmo dia, dentro do expediente
+    private static bool IsWithinWorkHours(DateTime startUtc, DateTime endUtc)
+    {
+        var start = ToBrazil(startUtc);
+        var end = ToBrazil(endUtc);
+        return start.Date == end.Date && start.TimeOfDay >= WorkStart && end.TimeOfDay <= WorkEnd;
+    }
+
+    private const int MaxPeople = 20;
+    private const int SlotStepMinutes = 30;
     private const int MaxImages = 5;
     private const long MaxImageBytes = 5 * 1024 * 1024;
     private static readonly System.Text.RegularExpressions.Regex ImageNameRegex =
@@ -136,9 +149,16 @@ public class AppointmentsController : ControllerBase
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
 
-        // 2. Calcular o término previsto
-        var startTimeUtc = dto.StartTime.UtcDateTime;
-        var endTimeUtc = startTimeUtc.AddMinutes(service.DurationMinutes);
+        // 2. A cliente informa a hora em que precisa estar pronta (fim do atendimento);
+        //    o início é calculado voltando a duração total (serviço x pessoas).
+        var people = Math.Clamp(dto.People, 1, MaxPeople);
+        var endTimeUtc = dto.ReadyTime.UtcDateTime;
+        var startTimeUtc = endTimeUtc.AddMinutes(-service.DurationMinutes * people);
+
+        if (!IsWithinWorkHours(startTimeUtc, endTimeUtc))
+        {
+            return BadRequest(new { message = "Esse horário não cabe no expediente (06:00 às 22:00) considerando o tempo total do serviço. Escolha um horário mais tarde." });
+        }
 
         // 3. Regra de ouro: Verificar se existe sobreposição de horários
         // Existe sobreposição se: (InicioA < FimB) E (FimA > InicioB)
@@ -180,6 +200,7 @@ public class AppointmentsController : ControllerBase
             TravelFee = fee?.TravelFee,
             DistanceKm = fee?.DistanceKm,
             ServiceItemId = dto.ServiceItemId,
+            People = people,
             StartTime = startTimeUtc,
             EndTime = endTimeUtc,
             Status = "Confirmed"
@@ -202,12 +223,13 @@ _context.Appointments.Add(appointment);
             clientPhone: appointment.ClientPhone,
             clientName: appointment.ClientName,
             serviceName: service.Name,
-            startTime: appointment.StartTime
+            startTime: ToBrazil(appointment.StartTime),
+            readyTime: ToBrazil(appointment.EndTime)
         );
 
         // 2. Criação automática no Google Calendar
  var eventTitle = $"{service.Name} - {appointment.ClientName}";
-        var eventDescription = $"Cliente: {appointment.ClientName}\nWhatsApp: {appointment.ClientPhone}\nEndereço: {appointment.ClientAddress}\nDescrição: {appointment.Description}\nFotos de referência: {appointment.ReferenceImages.Count}\nValor: R$ {service.Price:F2}" +
+        var eventDescription = $"Cliente: {appointment.ClientName}\nWhatsApp: {appointment.ClientPhone}\nEndereço: {appointment.ClientAddress}\nDescrição: {appointment.Description}\nFotos de referência: {appointment.ReferenceImages.Count}\nPessoas: {appointment.People}\nPronta às: {ToBrazil(appointment.EndTime):HH:mm}\nValor: R$ {service.Price * appointment.People:F2}" +
             (appointment.TravelFee is decimal tf ? $"\nDeslocamento: {appointment.DistanceKm:F1} km • R$ {tf:F2}" : "");
 
         await _calendarService.CreateEventAsync(
@@ -253,7 +275,8 @@ _context.Appointments.Add(appointment);
             {
                 Id = a.Id,
                 ServiceName = a.ServiceItem?.Name ?? "Serviço",
-                Price = a.ServiceItem?.Price ?? 0,
+                Price = (a.ServiceItem?.Price ?? 0) * a.People,
+                People = a.People,
                 StartTime = a.StartTime,
                 EndTime = a.EndTime,
                 ClientAddress = a.ClientAddress,
@@ -328,9 +351,10 @@ _context.Appointments.Add(appointment);
         }
     }
 
-    // GET: api/appointments/available-slots?date=2026-09-27&serviceId=1
+    // GET: api/appointments/available-slots?date=2026-09-27&serviceId=1&people=2
+    // Devolve os horários em que a cliente pode ESTAR PRONTA (fim do atendimento).
     [HttpGet("available-slots")]
-    public async Task<ActionResult<IEnumerable<string>>> GetAvailableSlots([FromQuery] string date, [FromQuery] int serviceId)
+    public async Task<ActionResult<IEnumerable<string>>> GetAvailableSlots([FromQuery] string date, [FromQuery] int serviceId, [FromQuery] int people = 1)
     {
         // 1. Validar e converter a string "YYYY-MM-DD"
         if (!DateTime.TryParse(date, out var parsedDate))
@@ -345,7 +369,13 @@ _context.Appointments.Add(appointment);
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
 
-        // 3. Expediente (09:00-18:00 em Brasília) convertido para UTC
+        if (people < 1 || people > MaxPeople)
+        {
+            return BadRequest(new { message = $"A quantidade de pessoas deve ser de 1 a {MaxPeople}." });
+        }
+        var totalMinutes = service.DurationMinutes * people;
+
+        // 3. Expediente (06:00-22:00 em Brasília) convertido para UTC
         var workStartUtc = LocalToUtc(parsedDate, WorkStart);
         var workEndUtc = LocalToUtc(parsedDate, WorkEnd);
 
@@ -357,24 +387,23 @@ _context.Appointments.Add(appointment);
             .ToListAsync();
 
         var availableSlots = new List<string>();
-        var currentSlot = workStartUtc;
 
-        // 5. Percorrer em blocos de 30 minutos
-        while (currentSlot.AddMinutes(service.DurationMinutes) <= workEndUtc)
+        // 5. Percorrer os horários de "pronta" em blocos de 30 minutos. O atendimento ocupa
+        //    [pronta - duração total, pronta] e precisa caber inteiro no expediente.
+        for (var ready = workStartUtc; ready <= workEndUtc; ready = ready.AddMinutes(SlotStepMinutes))
         {
-            var potentialEnd = currentSlot.AddMinutes(service.DurationMinutes);
+            var start = ready.AddMinutes(-totalMinutes);
+            if (start < workStartUtc) continue;
 
             // Verifica colisão: (InicioNovo < FimExistente) E (FimNovo > InicioExistente)
             bool isBusy = existingAppointments.Any(a =>
-                currentSlot < a.EndTime && potentialEnd > a.StartTime);
+                start < a.EndTime && ready > a.StartTime);
 
             if (!isBusy)
             {
                 // Retorna em horário local de Brasília
-                availableSlots.Add(TimeZoneInfo.ConvertTimeFromUtc(currentSlot, BrazilTz).ToString("HH:mm"));
+                availableSlots.Add(TimeZoneInfo.ConvertTimeFromUtc(ready, BrazilTz).ToString("HH:mm"));
             }
-
-            currentSlot = currentSlot.AddMinutes(30);
         }
 
         return Ok(availableSlots);
@@ -414,7 +443,7 @@ _context.Appointments.Add(appointment);
 
         if (startTime < WorkStart || endTime > WorkEnd)
         {
-            return BadRequest(new { message = "Horário deve estar entre 09:00 e 18:00." });
+            return BadRequest(new { message = "Horário deve estar entre 06:00 e 22:00." });
         }
 
         // 3. Converter de Brasília para UTC

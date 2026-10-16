@@ -71,12 +71,14 @@ interface AppointmentItem {
   distanceKm?: number | null;
   description?: string;
   referenceImages?: string[];
+  people?: number;
 }
 
 interface MyAppointment {
   id: number;
   serviceName: string;
-  price: number;
+  price: number; // valor total do serviço (unitário x pessoas), sem deslocamento
+  people?: number;
   startTime: string;
   endTime: string;
   clientAddress?: string;
@@ -203,7 +205,8 @@ export default function App() {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null); // horário em que ela precisa estar pronta
+  const [people, setPeople] = useState(1); // serviço para quantas pessoas (valor e duração multiplicam)
   
   // Dados do Cliente
   const [clientName, setClientName] = useState('');
@@ -262,13 +265,16 @@ export default function App() {
     });
   };
 
+  // O slot é o horário em que ela precisa estar PRONTA; o atendimento começa duração x pessoas antes.
   const formatEstimatedRange = () => {
     if (!selectedSlot || !selectedService) return '';
     const [h, m] = selectedSlot.split(':').map(Number);
-    const total = h * 60 + m + selectedService.durationMinutes;
-    const end = `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-    return `${selectedSlot} às ${end}`;
+    const total = Math.max(h * 60 + m - selectedService.durationMinutes * people, 0);
+    const start = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    return `${start} às ${selectedSlot}`;
   };
+
+  const MAX_PEOPLE = 20;
   
 
   useEffect(() => {
@@ -288,12 +294,12 @@ export default function App() {
     }
   };
 
-  const fetchAvailableSlots = async (serviceId: number, dateStr: string) => {
+  const fetchAvailableSlots = async (serviceId: number, dateStr: string, peopleCount: number = people) => {
     try {
       setLoadingSlots(true);
       setSelectedSlot(null);
       const response = await api.get<string[]>('/appointments/available-slots', {
-        params: { serviceId, date: dateStr },
+        params: { serviceId, date: dateStr, people: peopleCount },
       });
       setAvailableSlots(response.data);
     } catch (error) {
@@ -355,8 +361,8 @@ export default function App() {
         notify('Atenção', 'O início deve ser anterior ao fim.');
         return;
       }
-      if (blockStart < '09:00' || blockEnd > '18:00') {
-        notify('Atenção', 'O intervalo deve estar entre 09:00 e 18:00.');
+      if (blockStart < '06:00' || blockEnd > '22:00') {
+        notify('Atenção', 'O intervalo deve estar entre 06:00 e 22:00.');
         return;
       }
       payload.startTime = `${blockStart}:00`;
@@ -378,7 +384,7 @@ export default function App() {
     animateLayout();
     setSelectedService(service);
     setStep(2);
-    fetchAvailableSlots(service.id, selectedDate);
+    fetchAvailableSlots(service.id, selectedDate, people);
   };
 
   const formatPhone = (text: string) => {
@@ -531,8 +537,9 @@ export default function App() {
 
     try {
       setLoading(true);
-      // O slot está em horário de Brasília (UTC-3, sem horário de verão); a API recebe UTC
-      const startTimeIso = new Date(`${selectedDate}T${selectedSlot}:00-03:00`).toISOString();
+      // O slot (horário em que ela precisa estar pronta) está em horário de Brasília (UTC-3, sem horário de verão);
+      // a API recebe UTC e calcula o início voltando a duração total (serviço x pessoas)
+      const readyTimeIso = new Date(`${selectedDate}T${selectedSlot}:00-03:00`).toISOString();
 
       // multipart/form-data: campos de texto + fotos de referência
       const form = new FormData();
@@ -543,7 +550,8 @@ export default function App() {
       if (feeEstimate) form.append('cep', clientCep.replace(/\D/g, ''));
       form.append('description', description.trim());
       form.append('serviceItemId', String(selectedService?.id));
-      form.append('startTime', startTimeIso);
+      form.append('readyTime', readyTimeIso);
+      form.append('people', String(people));
       images.forEach((img, i) => {
         if (Platform.OS === 'web' && img.file) {
           form.append('images', img.file);
@@ -569,13 +577,14 @@ export default function App() {
       setBooked({
         phone: clientPhone,
         service: selectedService?.name ?? 'Serviço',
-        when: `${whenLabel} às ${selectedSlot}`,
-        total: (selectedService?.price ?? 0) + travelFeeValue,
+        when: `${whenLabel} • pronta às ${selectedSlot}`,
+        total: (selectedService?.price ?? 0) * people + travelFeeValue,
       });
 
       setStep(1);
       setSelectedService(null);
       setSelectedSlot(null);
+      setPeople(1);
       setClientName('');
       setClientPhone('');
       setClientAddress('');
@@ -867,17 +876,18 @@ export default function App() {
                     day: '2-digit',
                     month: '2-digit',
                   });
-                  const timeStr = start.toLocaleTimeString('pt-BR', {
+                  const timeFmt: Intl.DateTimeFormatOptions = {
                     timeZone: 'America/Sao_Paulo',
                     hour: '2-digit',
                     minute: '2-digit',
-                  });
+                  };
+                  const timeStr = `${start.toLocaleTimeString('pt-BR', timeFmt)} → pronta às ${new Date(appt.endTime).toLocaleTimeString('pt-BR', timeFmt)}`;
                   return (
                     <View key={appt.id} style={styles.adminCard}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.adminClientTitle}>{appt.serviceName}</Text>
                         <Text style={styles.adminSubText}>
-                          {dateStr} • {timeStr} • R$ {formatBRL(appt.price + (appt.travelFee ?? 0))}
+                          {dateStr} • {timeStr} • {appt.people && appt.people > 1 ? `${appt.people} pessoas • ` : ''}R$ {formatBRL(appt.price + (appt.travelFee ?? 0))}
                         </Text>
                         {appt.travelFee ? (
                           <Text style={styles.adminPhoneText}>
@@ -970,7 +980,7 @@ export default function App() {
                       onDayPress={(day: any) => {
                         setSelectedDate(day.dateString);
                         if (selectedService) {
-                          fetchAvailableSlots(selectedService.id, day.dateString);
+                          fetchAvailableSlots(selectedService.id, day.dateString, people);
                         }
                       }}
                       markedDates={{
@@ -993,7 +1003,44 @@ export default function App() {
                     />
                   </View>
 
-                  <Text style={styles.sectionHeader}>2. Horários Livres</Text>
+                  <Text style={styles.sectionHeader}>2. Para quantas pessoas?</Text>
+                  <View style={styles.peopleRow}>
+                    <TouchableOpacity
+                      style={[styles.peopleBtn, people <= 1 && styles.peopleBtnDisabled]}
+                      disabled={people <= 1}
+                      accessibilityLabel="Diminuir pessoas"
+                      onPress={() => {
+                        const next = people - 1;
+                        setPeople(next);
+                        if (selectedService) fetchAvailableSlots(selectedService.id, selectedDate, next);
+                      }}
+                    >
+                      <Ionicons name="remove" size={20} color={THEME.roseDark} />
+                    </TouchableOpacity>
+                    <Text style={styles.peopleCount}>
+                      {people} {people === 1 ? 'pessoa' : 'pessoas'}
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.peopleBtn, people >= MAX_PEOPLE && styles.peopleBtnDisabled]}
+                      disabled={people >= MAX_PEOPLE}
+                      accessibilityLabel="Aumentar pessoas"
+                      onPress={() => {
+                        const next = people + 1;
+                        setPeople(next);
+                        if (selectedService) fetchAvailableSlots(selectedService.id, selectedDate, next);
+                      }}
+                    >
+                      <Ionicons name="add" size={20} color={THEME.roseDark} />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.disclaimerText}>
+                    O valor do serviço e o tempo de atendimento são multiplicados pelo número de pessoas. O deslocamento é cobrado uma vez só.
+                  </Text>
+
+                  <Text style={styles.sectionHeader}>3. Horário em que você precisa estar pronta</Text>
+                  <Text style={styles.disclaimerText}>
+                    Escolha o horário pensando em quando precisa estar pronta para sair, não em quando quer começar.
+                  </Text>
                   {loadingSlots ? (
                     <SkeletonList height={44} />
                   ) : availableSlots.length === 0 ? (
@@ -1023,7 +1070,7 @@ export default function App() {
                     </View>
                   )}
 
-                  <Text style={styles.sectionHeader}>3. Dados e Local</Text>
+                  <Text style={styles.sectionHeader}>4. Dados e Local</Text>
                   <View style={styles.formCard}>
                     <Text style={styles.inputLabel}>Seu Nome</Text>
                     <TextInput
@@ -1163,15 +1210,16 @@ export default function App() {
                       <View style={styles.ticketDivider} />
                       <View style={styles.ticketFooter}>
                         <View>
-                          <Text style={styles.ticketLabel}>Horário estimado</Text>
+                          <Text style={styles.ticketLabel}>Início → pronta às</Text>
                           <Text style={styles.ticketValue}>{formatEstimatedRange()}</Text>
                         </View>
                         <View style={{ alignItems: 'flex-end' }}>
                           <Text style={styles.ticketLabel}>{travelFeeValue > 0 ? 'Valor total' : 'Valor'}</Text>
-                          <Text style={styles.ticketPrice}>R$ {formatBRL(selectedService.price + travelFeeValue)}</Text>
+                          <Text style={styles.ticketPrice}>R$ {formatBRL(selectedService.price * people + travelFeeValue)}</Text>
                           {travelFeeValue > 0 ? (
                             <Text style={styles.ticketLabel}>
-                              Serviço R$ {formatBRL(selectedService.price)} + deslocamento R$ {formatBRL(travelFeeValue)}
+                              Serviço R$ {formatBRL(selectedService.price * people)}
+                              {people > 1 ? ` (${people} pessoas)` : ''} + deslocamento R$ {formatBRL(travelFeeValue)}
                             </Text>
                           ) : null}
                         </View>
@@ -1338,6 +1386,12 @@ export default function App() {
                       hour: '2-digit',
                       minute: '2-digit',
                     });
+                    const readyTimeFormatted = new Date(item.endTime).toLocaleTimeString('pt-BR', {
+                      timeZone: 'America/Sao_Paulo',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    const itemPeople = item.people ?? 1;
                     const isCancelled = item.status === 'Cancelled';
                     const isBlocked = item.status === 'Blocked';
 
@@ -1359,7 +1413,8 @@ export default function App() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.adminClientTitle}>{item.clientName}</Text>
                           <Text style={styles.adminSubText}>
-                            {item.serviceItem?.name || 'Serviço'} • {startTimeFormatted}
+                            {item.serviceItem?.name || 'Serviço'}
+                            {itemPeople > 1 ? ` (${itemPeople} pessoas)` : ''} • {startTimeFormatted} → pronta às {readyTimeFormatted}
                           </Text>
                           <Text style={styles.adminPhoneText}>WhatsApp: {item.clientPhone}</Text>
                           {item.clientAddress ? (
@@ -1368,7 +1423,7 @@ export default function App() {
                           {item.travelFee != null && item.distanceKm != null ? (
                             <Text style={styles.adminPhoneText}>
                               {item.travelFee > 0
-                                ? `🚗 ${item.distanceKm.toFixed(1)} km • Deslocamento: R$ ${formatBRL(item.travelFee)} • Total: R$ ${formatBRL((item.serviceItem?.price ?? 0) + item.travelFee)}`
+                                ? `🚗 ${item.distanceKm.toFixed(1)} km • Deslocamento: R$ ${formatBRL(item.travelFee)} • Total: R$ ${formatBRL((item.serviceItem?.price ?? 0) * itemPeople + item.travelFee)}`
                                 : `✨ ${item.distanceKm.toFixed(1)} km • Deslocamento gratuito`}
                             </Text>
                           ) : null}
@@ -1653,6 +1708,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  peopleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 8,
+  },
+  peopleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  peopleBtnDisabled: {
+    opacity: 0.4,
+  },
+  peopleCount: {
+    fontSize: 16,
+    color: THEME.text,
+    minWidth: 90,
+    textAlign: 'center',
   },
   slotBadge: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',

@@ -54,6 +54,11 @@ namespace AgendamentoApi.Migrations
                     b.Property<DateTime>("EndTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("People")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.PrimitiveCollection<List<string>>("ReferenceImages")
                         .IsRequired()
                         .HasColumnType("text[]");

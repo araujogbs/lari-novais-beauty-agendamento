@@ -25,6 +25,12 @@ public class CreateAppointmentDto
     [Required]
     public int ServiceItemId { get; set; }
 
+    // Horário em que a cliente precisa estar 100% pronta (fim do atendimento).
+    // O início é calculado pelo servidor: ReadyTime - (duração do serviço x pessoas).
     [Required]
-    public DateTimeOffset StartTime { get; set; }
+    public DateTimeOffset ReadyTime { get; set; }
+
+    // Para quantas pessoas é o serviço (o valor do serviço e a duração são multiplicados; o deslocamento não)
+    [Range(1, 20, ErrorMessage = "A quantidade de pessoas deve ser de 1 a 20")]
+    public int People { get; set; } = 1;
 }
