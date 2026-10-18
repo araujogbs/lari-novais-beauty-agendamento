@@ -35,4 +35,4 @@ Para criar uma tela nova: componente em `src/screens/`, novo valor em `ViewMode`
 7. Preços e durações dos serviços vêm do banco (migration `AtualizarServicosSocial`) e devem bater com o site.
 
 ## ✅ Antes de dar uma tarefa como pronta
-`npx tsc --noEmit` (tipos). No backend, `dotnet build` (pare a API antes, ou o executável fica travado).
+`npx tsc --noEmit` (tipos) e `npm run lint` (ESLint do Expo). No backend, `dotnet build` (pare a API antes, ou o executável fica travado).

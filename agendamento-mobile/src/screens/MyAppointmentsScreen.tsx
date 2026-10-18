@@ -38,7 +38,9 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
     }
   };
 
+  // Busca uma única vez ao abrir, quando a tela já vem com o telefone do agendamento recém-feito
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (initialPhone) search(initialPhone);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

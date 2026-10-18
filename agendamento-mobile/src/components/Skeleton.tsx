@@ -1,10 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, StyleProp, View, ViewStyle } from 'react-native';
 import { THEME } from '../theme';
 
 // Bloco placeholder com opacidade pulsante
 export function SkeletonBlock({ height = 64, style }: { height?: number; style?: StyleProp<ViewStyle> }) {
-  const opacity = useRef(new Animated.Value(0.4)).current;
+  const [opacity] = useState(() => new Animated.Value(0.4));
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([

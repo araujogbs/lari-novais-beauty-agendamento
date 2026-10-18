@@ -1,11 +1,11 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { THEME } from '../theme';
 
 // Indicador de etapas com linha que preenche
 export function Stepper({ step }: { step: 1 | 2 }) {
-  const fill = useRef(new Animated.Value(step === 2 ? 1 : 0)).current;
+  const [fill] = useState(() => new Animated.Value(step === 2 ? 1 : 0));
   useEffect(() => {
     Animated.timing(fill, { toValue: step === 2 ? 1 : 0, duration: 350, useNativeDriver: false }).start();
   }, [step, fill]);

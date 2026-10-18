@@ -77,7 +77,7 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
       await cancelAppointment(id);
       notify('Sucesso', 'Marcação desmarcada com sucesso.');
       load(date);
-    } catch (error) {
+    } catch {
       notify('Erro', 'Falha ao desmarcar. Tente novamente.');
     }
   };

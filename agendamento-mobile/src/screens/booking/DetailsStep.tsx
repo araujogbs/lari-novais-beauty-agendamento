@@ -30,24 +30,30 @@ interface Props {
 /** Etapa 2: dia, pessoas, horário, dados, descrição e confirmação. */
 export function DetailsStep({ service, form, notify, openLightbox, onBack, onBooked }: Props) {
   const { selectedDate, selectedSlot, people } = form;
-  const [availableSlots, setAvailableSlots] = useState<string[]>([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Busca os horários livres sempre que o serviço, o dia ou a quantidade de pessoas mudam
+  // Horários livres da combinação serviço + dia + pessoas. Enquanto a resposta da combinação
+  // atual não chega, está carregando (e nunca mostra os horários de outro dia).
+  const slotsKey = `${service.id}|${selectedDate}|${people}`;
+  const [slotsResult, setSlotsResult] = useState<{ key: string; slots: string[] } | null>(null);
+  const loadingSlots = slotsResult?.key !== slotsKey;
+  const availableSlots = slotsResult && !loadingSlots ? slotsResult.slots : [];
+
   useEffect(() => {
     let active = true;
-    setLoadingSlots(true);
     form.setSelectedSlot(null);
     getAvailableSlots(service.id, selectedDate, people)
-      .then((slots) => active && setAvailableSlots(slots))
-      .catch(() => active && notify('Erro', 'Falha ao procurar horários livres para esta data.'))
-      .finally(() => active && setLoadingSlots(false));
+      .then((slots) => active && setSlotsResult({ key: slotsKey, slots }))
+      .catch(() => {
+        if (!active) return;
+        setSlotsResult({ key: slotsKey, slots: [] });
+        notify('Erro', 'Falha ao procurar horários livres para esta data.');
+      });
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service.id, selectedDate, people]);
+  }, [slotsKey]);
 
   const handleConfirm = async () => {
     if (!selectedSlot) {
