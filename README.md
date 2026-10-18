@@ -107,7 +107,7 @@ API e App/
         └── theme.ts · constants.ts · types.ts
 ```
 
-O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site](../Site/README.md)).
+O site institucional, que usa a mesma API, fica em outro repositório: [lari-novais-beauty-site](https://github.com/araujogbs/lari-novais-beauty-site) (localmente, na pasta `../Site`).
 
 ---
 
