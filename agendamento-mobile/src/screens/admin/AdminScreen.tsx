@@ -1,0 +1,212 @@
+import React, { useEffect, useState } from 'react';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { Calendar } from 'react-native-calendars';
+import { SkeletonList } from '../../components/Skeleton';
+import {
+  approveAppointment,
+  cancelAppointment,
+  getAdminAppointments,
+  getPendingAppointments,
+  rejectAppointment,
+} from '../../services/appointments';
+import { authService } from '../../services/auth';
+import { common } from '../../styles/common';
+import { THEME } from '../../theme';
+import type { AppointmentItem, Notify, OpenLightbox } from '../../types';
+import { todayISO } from '../../utils/date';
+import { getErrorMessage } from '../../utils/errors';
+import { AdminAppointmentCard } from './AdminAppointmentCard';
+import { BlockSchedule } from './BlockSchedule';
+
+interface Props {
+  notify: Notify;
+  openLightbox: OpenLightbox;
+  /** Sem token válido: volta para o login. */
+  onSessionExpired: () => void;
+}
+
+/** Painel Ateliê: pedidos em análise, agenda do dia, bloqueios e atalhos de cada atendimento. */
+export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
+  const [date, setDate] = useState(todayISO);
+  const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
+  const [pending, setPending] = useState<AppointmentItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState<string | null>(null); // para carregar as fotos (rota protegida)
+
+  const handleAuthError = async (error: any): Promise<boolean> => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      // Token inválido ou expirado: faz logout e vai para o login
+      await authService.removeToken();
+      onSessionExpired();
+      notify('Sessão expirada', 'Por favor, faça login novamente.');
+      return true;
+    }
+    return false;
+  };
+
+  const load = async (dateStr: string) => {
+    try {
+      setLoading(true);
+      setToken(await authService.getToken());
+      const [day, requests] = await Promise.all([getAdminAppointments(dateStr), getPendingAppointments()]);
+      setAppointments(day);
+      setPending(requests);
+    } catch (error: any) {
+      console.error('Erro ao buscar agendamentos:', error.response?.status, error.response?.data);
+      if (!(await handleAuthError(error))) {
+        notify('Erro', 'Não foi possível carregar os agendamentos.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      if (!(await authService.isAuthenticated())) {
+        onSessionExpired();
+        return;
+      }
+      load(date);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCancel = async (id: number) => {
+    try {
+      await cancelAppointment(id);
+      notify('Sucesso', 'Marcação desmarcada com sucesso.');
+      load(date);
+    } catch (error) {
+      notify('Erro', 'Falha ao desmarcar. Tente novamente.');
+    }
+  };
+
+  const handleApprove = async (id: number) => {
+    try {
+      await approveAppointment(id);
+      notify('Agendamento confirmado', 'A cliente vai receber a confirmação pelo WhatsApp.', 'success');
+      await load(date);
+    } catch (error: any) {
+      if (!(await handleAuthError(error))) {
+        notify('Erro', getErrorMessage(error, 'Não foi possível aprovar o pedido.'));
+        load(date);
+      }
+    }
+  };
+
+  const handleReject = async (id: number, reason: string) => {
+    try {
+      await rejectAppointment(id, reason);
+      notify('Pedido recusado', 'O horário foi liberado e a cliente será avisada pelo WhatsApp.', 'warn');
+      await load(date);
+    } catch (error: any) {
+      if (!(await handleAuthError(error))) {
+        notify('Erro', getErrorMessage(error, 'Não foi possível recusar o pedido.'));
+        load(date);
+      }
+    }
+  };
+
+  const renderCard = (item: AppointmentItem, showDate = false) => (
+    <AdminAppointmentCard
+      key={item.id}
+      item={item}
+      token={token}
+      notify={notify}
+      openLightbox={openLightbox}
+      onCancel={handleCancel}
+      onApprove={handleApprove}
+      onReject={handleReject}
+      showDate={showDate}
+    />
+  );
+
+  // Tudo rola junto: cabeçalho, pedidos em análise, bloqueio e calendário ficam no topo da lista do dia
+  const header = (
+    <>
+      <View style={[common.header, { paddingHorizontal: 4 }]}>
+        <Text style={common.title}>Painel de Atendimentos</Text>
+        <Text style={common.subtitle}>Sua gestão de agenda a domicílio</Text>
+      </View>
+
+      {pending.length > 0 && (
+        <View style={styles.pendingSection}>
+          <Text style={styles.sectionTitle}>
+            Pedidos em análise <Text style={styles.pendingCount}>({pending.length})</Text>
+          </Text>
+          <Text style={styles.sectionHint}>A cliente só recebe a confirmação depois que você aprovar.</Text>
+          {pending.map((item) => renderCard(item, true))}
+        </View>
+      )}
+
+      <View style={{ marginTop: 12 }}>
+        <BlockSchedule date={date} notify={notify} onBlocked={() => load(date)} />
+      </View>
+
+      <View style={[common.calendarContainer, { marginTop: 16 }]}>
+        <Calendar
+          current={date}
+          onDayPress={(day: any) => {
+            setDate(day.dateString);
+            load(day.dateString);
+          }}
+          markedDates={{
+            [date]: {
+              selected: true,
+              selectedColor: THEME.text,
+              selectedTextColor: THEME.white,
+            },
+          }}
+          theme={{
+            todayTextColor: THEME.roseDark,
+            arrowColor: THEME.text,
+          }}
+        />
+      </View>
+
+      <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Agenda do dia {date.split('-').reverse().join('/')}</Text>
+    </>
+  );
+
+  return (
+    <FlatList
+      data={loading ? [] : appointments}
+      keyExtractor={(item) => item.id.toString()}
+      contentContainerStyle={[common.list, { paddingTop: 0 }]}
+      ListHeaderComponent={header}
+      ListEmptyComponent={
+        loading ? (
+          <SkeletonList height={80} />
+        ) : (
+          <View style={common.emptyContainer}>
+            <Text style={common.emptyText}>Nenhum atendimento para esta data.</Text>
+          </View>
+        )
+      }
+      renderItem={({ item }) => renderCard(item)}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  pendingSection: {
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: THEME.roseDark,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  pendingCount: {
+    color: '#B7791F',
+  },
+  sectionHint: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    marginBottom: 10,
+  },
+});

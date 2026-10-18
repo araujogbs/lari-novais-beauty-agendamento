@@ -32,50 +32,79 @@ Sistema completo de agendamento para uma maquiadora que atende a domicílio: a *
 - **Taxa de deslocamento automática:** ao digitar o CEP, o app preenche rua e bairro e mostra a distância até o ateliê e a taxa (ou "deslocamento gratuito"). A taxa é somada ao valor total.
 - **Descrição obrigatória** de como a cliente quer o serviço.
 - **Fotos de referência opcionais:** até 5 imagens (JPG, PNG ou WebP, 5 MB cada), com miniaturas e botão para remover.
-- **Meus Agendamentos:** a cliente digita o WhatsApp, vê os agendamentos futuros confirmados e pode cancelar (com pelo menos 24 h de antecedência).
+- **Meus Agendamentos:** a cliente digita o WhatsApp, vê os agendamentos futuros ("Em análise" ou "Confirmado") e pode cancelar (pedido em análise a qualquer momento; confirmado com mais de 24 h de antecedência).
 - **Tela de agendamento concluído:** ao confirmar, a cliente vê o resumo e é levada (botão ou automaticamente após 6 s) para "Meus Agendamentos", já com o telefone preenchido.
 
 ### Maquiadora (Painel Ateliê)
-Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha).
+Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha). O mesmo painel existe no site, em `/#painel` (veja o README do Site).
+- **Pedidos em análise** no topo do painel (de qualquer data), com **Aprovar** e **Recusar** (com motivo opcional). Só depois de aprovar a cliente recebe a confirmação e o evento vai para o Google Calendar.
 - Lista de atendimentos por dia, com serviço, horário, WhatsApp, endereço, descrição do pedido e **fotos de referência**.
 - **Atalho do WhatsApp:** abre a conversa com uma mensagem de confirmação pronta.
 - **Atalho do mapa:** abre o endereço no Google Maps (só aparece se houver endereço).
-- **Desmarcar** um atendimento.
+- **Desmarcar** um atendimento confirmado.
 - **Bloquear agenda** (dia inteiro ou intervalo de horas, com motivo) e **desbloquear**.
 - Sessão por JWT; ao expirar, o app volta para o login.
 
 ### Automações
-- Confirmação por **WhatsApp** após o agendamento.
-- Criação do evento no **Google Calendar** com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
+- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar. Opcionalmente, aviso de pedido novo para a maquiadora (`WhatsApp:OwnerPhone`).
+- Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
 
 ## Estrutura do repositório
 
 ```
-AgendamentoAPI/
+API e App/
 ├── AgendamentoApi/                  # Backend .NET
 │   ├── Controllers/
 │   │   ├── AppointmentsController.cs  # Agendamentos, horários, bloqueios, fotos, "meus agendamentos"
 │   │   ├── AuthController.cs          # Login do administrador (JWT)
-│   │   ├── ServicesController.cs      # Catálogo de serviços
-│   │   └── WeatherForecastController.cs  # Sobra do template do .NET
+│   │   └── ServicesController.cs      # Catálogo de serviços
 │   ├── Data/AppDbContext.cs
 │   ├── DTOs/
 │   │   ├── CreateAppointmentDto.cs    # Criação (multipart: dados + imagens)
 │   │   ├── BlockSlotDto.cs            # Bloqueio de agenda
 │   │   └── MyAppointmentDto.cs        # Resposta enxuta da cliente + ClientCancelDto
 │   ├── Models/                        # Appointment, ServiceItem
-│   ├── Services/                      # WhatsApp e Google Calendar (interface + implementação)
+│   ├── Services/
+│   │   ├── TravelFeeService.cs        # CEP -> distância -> taxa de deslocamento
+│   │   ├── WhatsAppService.cs         # Confirmação por WhatsApp (interface + implementação)
+│   │   └── GoogleCalendarService.cs   # Evento no Google Calendar (interface + implementação)
 │   ├── Migrations/                    # Histórico do banco
 │   ├── uploads/                       # Fotos enviadas (criada em runtime, fora do Git)
-│   └── Program.cs                     # CORS, JWT, EF Core, injeção de dependência
+│   ├── devlog.md                      # Diário de desenvolvimento
+│   └── Program.cs                     # CORS, JWT, rate limit, EF Core, injeção de dependência
 └── agendamento-mobile/              # App Expo
-    ├── App.tsx                        # Telas e fluxo (cliente, login e painel admin)
-    ├── src/services/api.ts            # Axios com o token JWT no header
-    ├── src/services/auth.ts           # Login e armazenamento do token (AsyncStorage)
-    └── assets/                        # Imagem de fundo, ícones
+    ├── App.tsx                        # Raiz: navegação entre telas, aviso (toast) e visualizador de fotos
+    ├── assets/                        # Imagem de fundo, ícones
+    └── src/
+        ├── screens/
+        │   ├── WelcomeScreen.tsx        # Tela inicial (toque longo no título abre o painel)
+        │   ├── booking/                 # Fluxo da cliente
+        │   │   ├── BookingScreen.tsx      # Etapas e serviços
+        │   │   ├── ServiceStep.tsx        # Etapa 1: lista de serviços
+        │   │   ├── DetailsStep.tsx        # Etapa 2: dia, horário, dados e confirmação
+        │   │   └── PeopleSelector · AddressSection · DescriptionSection · BookingTicket
+        │   ├── SuccessScreen.tsx        # Agendamento concluído
+        │   ├── MyAppointmentsScreen.tsx # Consulta e cancelamento pelo WhatsApp
+        │   ├── AdminLoginScreen.tsx     # Login da maquiadora
+        │   └── admin/                   # Painel Ateliê
+        │       ├── AdminScreen.tsx        # Agenda do dia
+        │       ├── AdminAppointmentCard.tsx
+        │       └── BlockSchedule.tsx      # Bloqueio de dia ou intervalo
+        ├── components/                # AppHeader, Toast, Lightbox, Stepper, Skeleton
+        ├── hooks/                     # useToast, useBookingForm (estado do formulário)
+        ├── services/
+        │   ├── api.ts                 # Axios com o token JWT no header
+        │   ├── auth.ts                # Login e armazenamento do token (AsyncStorage)
+        │   └── appointments.ts        # Chamadas à API (cliente e painel)
+        ├── utils/                     # Formatação, datas (fuso de Brasília), erros, links
+        ├── styles/common.ts           # Estilos compartilhados entre telas
+        ├── config/calendarLocale.ts   # Calendário em português
+        └── theme.ts · constants.ts · types.ts
 ```
+
+O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site](../Site/README.md)).
 
 ---
 
@@ -85,18 +114,19 @@ AgendamentoAPI/
 - **Sem sobreposição de horários.** A regra é garantida em duas camadas:
   1. consulta no código (`InicioNovo < FimExistente` e `FimNovo > InicioExistente`);
   2. **constraint de exclusão do PostgreSQL** (`no_overlapping_appointments`, índice GiST com `tstzrange`), que impede conflito mesmo com duas marcações simultâneas. Nesse caso a API responde `409`.
-- Agendamentos **cancelados** não ocupam horário.
+- **Todo agendamento novo nasce em análise** (`Pending`) e já **segura o horário**, para ninguém pedir o mesmo. A maquiadora aprova (`Confirmed`) ou recusa (`Rejected`). Não há prazo automático: o pedido fica em análise até ela decidir.
+- Agendamentos **cancelados** e **recusados** não ocupam horário.
 - **Bloqueios** são gravados como agendamentos de status `Blocked`, então os horários somem da lista de livres automaticamente. Só é possível bloquear onde não há agendamento.
-- **A cliente escolhe a hora em que precisa estar pronta** (`readyTime`), que vira o `EndTime`. O servidor calcula o início voltando a duração total: `início = readyTime − duração do serviço × pessoas`. O atendimento inteiro precisa caber no expediente (se o início cair antes das 06:00 ou o fim depois das 22:00, a API responde `400`).
+- **A cliente escolhe o horário de início** (`startTime`). O servidor calcula o término somando a duração total: `término = startTime + duração do serviço × pessoas`. O atendimento inteiro precisa caber no expediente (se o término passar das 22:00, a API responde `400`). Os horários livres já vêm filtrados para isso.
 - **Quantidade de pessoas (`People`):** o valor do serviço e a duração são multiplicados pelo número de pessoas; a taxa de deslocamento não.
 - **Descrição** é obrigatória (até 1000 caracteres); **fotos** são opcionais (máx. 5, 5 MB cada).
-- **Cancelamento pela cliente:** só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
+- **Cancelamento pela cliente:** pedido em análise pode ser cancelado a qualquer momento; confirmado, só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
 - **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
   - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 3,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
   - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
   - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
   - O `POST /appointments` recalcula a taxa a partir do `cep`; o valor enviado pelo app nunca é confiado.
-- Status usados: `Confirmed`, `Cancelled`, `Blocked`.
+- Status usados (constantes em `Models/AppointmentStatus.cs`): `Pending` (em análise), `Confirmed`, `Rejected`, `Cancelled`, `Blocked`.
 
 ---
 
@@ -126,13 +156,20 @@ AgendamentoAPI/
 | ReferenceImages | text[] | Nomes dos arquivos em `uploads/` |
 | ServiceItemId | int | FK para o serviço |
 | People | int | Para quantas pessoas é o serviço (padrão 1) |
-| StartTime / EndTime | timestamptz | UTC. `EndTime` é a hora em que a cliente fica pronta; `StartTime` é calculado |
-| Status | string | `Confirmed`, `Cancelled` ou `Blocked` |
+| StartTime / EndTime | timestamptz | UTC. `StartTime` é o início escolhido; `EndTime` é o término previsto, calculado |
+| Status | string | `Pending`, `Confirmed`, `Rejected`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations:** criação das tabelas, endereço, `ClientAddress` opcional, constraint anti-sobreposição, `Description`/`ReferenceImages` `TravelFee`/`DistanceKm` (`AdicionarTaxaDeslocamento`) e `People` (`AdicionarQuantidadePessoas`).
+**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial` e `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados).
 
-A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social (Maquiagem R$ 350, Penteado R$ 350 com 90 min, Maquiagem + Penteado R$ 700 com 150 min, Escova e Babyliss R$ 300).
+A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social, os mesmos mostrados no site:
+
+| Serviço | Duração | Preço |
+|---|---|---|
+| Maquiagem | 60 min | R$ 350 |
+| Penteado | 90 min | R$ 350 |
+| Maquiagem + Penteado | 150 min | R$ 700 |
+| Escova e Babyliss | 60 min | R$ 300 |
 
 ---
 
@@ -155,13 +192,16 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários em que a cliente pode **estar pronta** (`["10:00","10:30",...]`), já descontando a duração total (serviço × pessoas). `people` é opcional (padrão 1, máx. 20) |
-| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `readyTime` (ISO 8601 com offset/UTC: hora em que ela precisa estar pronta), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. `people` é opcional (padrão 1, máx. 20) |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
 | GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
-| PATCH | `/appointments/{id}/status` | Admin | Muda o status (body: string JSON, ex.: `"Cancelled"`) |
+| GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data |
+| POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, envia a confirmação por WhatsApp e cria o evento no Google Calendar. `409` se não estiver mais em análise |
+| POST | `/appointments/{id}/reject` | Admin | Recusa um pedido em análise (body opcional `{ "reason": "..." }`): vira `Rejected`, libera o horário e avisa a cliente. `409` se não estiver mais em análise |
+| PATCH | `/appointments/{id}/status` | Admin | Desmarca um atendimento ou desfaz um bloqueio. Só aceita `"Cancelled"` (string JSON) |
 | POST | `/appointments/block-slot` | Admin | Bloqueia agenda: `{ date, startTime?, endTime?, reason? }` (sem horários = expediente todo) |
 | GET | `/appointments/images/{arquivo}` | Admin | Serve uma foto de referência |
 
@@ -188,6 +228,7 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `Admin:Username` | Sim | Usuário do painel |
 | `Admin:PasswordHash` | Sim | Hash da senha no formato do ASP.NET Identity (`PasswordHasher`). Nunca a senha em texto |
 | `WhatsApp:ApiUrl` / `WhatsApp:ApiKey` | Não | Sem isso, a mensagem só aparece no log (simulação) |
+| `WhatsApp:OwnerPhone` | Não | WhatsApp da maquiadora (ex.: `5511914834786`) para receber aviso de cada pedido novo |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
 | `TravelFee:*` | Não | Já em `appsettings.json`: `OriginAddress`, `OriginCep`, `OriginLatitude`/`OriginLongitude`, `FreeRadiusKm` (5.0) e `PricePerKm` (3.00) |
 | `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
@@ -282,9 +323,9 @@ Já implementado:
 - **Em produção**, defina `Cors:AllowedOrigins` (se houver cliente web) e publique atrás de HTTPS (o redirecionamento exige que o servidor ou proxy exponha a porta HTTPS). Atrás de proxy reverso, configure `ForwardedHeaders` para o limite por IP enxergar o IP real da cliente.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
-- O texto da confirmação por WhatsApp pede para "responder esta mensagem" para desmarcar; vale atualizá-lo para citar o app (**Meus Agendamentos**).
+- Pedidos em análise não expiram sozinhos; se a maquiadora não decidir, o horário continua reservado. Uma ideia é recusar automaticamente pedidos parados há mais de X horas.
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.
 - Fotos ficam em disco local (`uploads/`); em produção, considere armazenamento em nuvem e backup.
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.
-- `WeatherForecastController` é resto do template e pode ser removido.
+- `GoogleCalendarService` usa `GoogleCredential.FromStream`, marcado como obsoleto pelo Google (aviso `CS0618` no build); migrar para `CredentialFactory` ao ligar a integração de verdade.
 - Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel, notificações push para a maquiadora.
