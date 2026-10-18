@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace AgendamentoApi.Models;
 
 public class Appointment
@@ -32,4 +34,8 @@ public class Appointment
     public string Status { get; set; } = AppointmentStatus.Pending;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Até quando a maquiadora pode responder o pedido (só para os em análise; não é gravado no banco)
+    [NotMapped]
+    public DateTime? ExpiresAt => Status == AppointmentStatus.Pending ? CreatedAt + AppointmentStatus.PendingExpiration : null;
 }

@@ -46,7 +46,7 @@ Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, segu
 - Sessão por JWT; ao expirar, o app volta para o login.
 
 ### Automações
-- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar. Opcionalmente, aviso de pedido novo para a maquiadora (`WhatsApp:OwnerPhone`).
+- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar; aviso quando o pedido expira sem resposta. Opcionalmente, aviso de pedido novo para a maquiadora (`WhatsApp:OwnerPhone`).
 - Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
@@ -114,8 +114,9 @@ O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site
 - **Sem sobreposição de horários.** A regra é garantida em duas camadas:
   1. consulta no código (`InicioNovo < FimExistente` e `FimNovo > InicioExistente`);
   2. **constraint de exclusão do PostgreSQL** (`no_overlapping_appointments`, índice GiST com `tstzrange`), que impede conflito mesmo com duas marcações simultâneas. Nesse caso a API responde `409`.
-- **Todo agendamento novo nasce em análise** (`Pending`) e já **segura o horário**, para ninguém pedir o mesmo. A maquiadora aprova (`Confirmed`) ou recusa (`Rejected`). Não há prazo automático: o pedido fica em análise até ela decidir.
-- Agendamentos **cancelados** e **recusados** não ocupam horário.
+- **Todo agendamento novo nasce em análise** (`Pending`) e já **segura o horário**, para ninguém pedir o mesmo. A maquiadora aprova (`Confirmed`) ou recusa (`Rejected`).
+- **Prazo de 3 dias** (`AppointmentStatus.PendingExpiration`): o `PendingExpirationService` roda ao subir a API e a cada 30 min, e passa para `Expired` os pedidos em análise criados há mais de 3 dias ou cujo horário já passou. O horário é liberado e a cliente recebe um aviso pelo WhatsApp. O painel mostra o prazo de cada pedido (`expiresAt`).
+- Agendamentos **cancelados**, **recusados** e **expirados** não ocupam horário (lista `AppointmentStatus.FreeSlot`, a mesma da constraint do banco).
 - **Bloqueios** são gravados como agendamentos de status `Blocked`, então os horários somem da lista de livres automaticamente. Só é possível bloquear onde não há agendamento.
 - **A cliente escolhe o horário de início** (`startTime`). O servidor calcula o término somando a duração total: `término = startTime + duração do serviço × pessoas`. O atendimento inteiro precisa caber no expediente (se o término passar das 22:00, a API responde `400`). Os horários livres já vêm filtrados para isso.
 - **Quantidade de pessoas (`People`):** o valor do serviço e a duração são multiplicados pelo número de pessoas; a taxa de deslocamento não.
@@ -126,7 +127,7 @@ O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site
   - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
   - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
   - O `POST /appointments` recalcula a taxa a partir do `cep`; o valor enviado pelo app nunca é confiado.
-- Status usados (constantes em `Models/AppointmentStatus.cs`): `Pending` (em análise), `Confirmed`, `Rejected`, `Cancelled`, `Blocked`.
+- Status usados (constantes em `Models/AppointmentStatus.cs`): `Pending` (em análise), `Confirmed`, `Rejected`, `Expired` (3 dias sem resposta), `Cancelled`, `Blocked`.
 
 ---
 
@@ -157,10 +158,10 @@ O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site
 | ServiceItemId | int | FK para o serviço |
 | People | int | Para quantas pessoas é o serviço (padrão 1) |
 | StartTime / EndTime | timestamptz | UTC. `StartTime` é o início escolhido; `EndTime` é o término previsto, calculado |
-| Status | string | `Pending`, `Confirmed`, `Rejected`, `Cancelled` ou `Blocked` |
+| Status | string | `Pending`, `Confirmed`, `Rejected`, `Expired`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial` e `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados).
+**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados) e `AdicionarStatusExpirado` (e os expirados).
 
 A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social, os mesmos mostrados no site:
 
@@ -198,7 +199,7 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 | GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
-| GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data |
+| GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data (cada um com `expiresAt`, o prazo para responder) |
 | POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, envia a confirmação por WhatsApp e cria o evento no Google Calendar. `409` se não estiver mais em análise |
 | POST | `/appointments/{id}/reject` | Admin | Recusa um pedido em análise (body opcional `{ "reason": "..." }`): vira `Rejected`, libera o horário e avisa a cliente. `409` se não estiver mais em análise |
 | PATCH | `/appointments/{id}/status` | Admin | Desmarca um atendimento ou desfaz um bloqueio. Só aceita `"Cancelled"` (string JSON) |
@@ -323,7 +324,6 @@ Já implementado:
 - **Em produção**, defina `Cors:AllowedOrigins` (se houver cliente web) e publique atrás de HTTPS (o redirecionamento exige que o servidor ou proxy exponha a porta HTTPS). Atrás de proxy reverso, configure `ForwardedHeaders` para o limite por IP enxergar o IP real da cliente.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
-- Pedidos em análise não expiram sozinhos; se a maquiadora não decidir, o horário continua reservado. Uma ideia é recusar automaticamente pedidos parados há mais de X horas.
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.
 - Fotos ficam em disco local (`uploads/`); em produção, considere armazenamento em nuvem e backup.
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.

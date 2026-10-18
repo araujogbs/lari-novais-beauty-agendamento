@@ -5,8 +5,11 @@ export interface ServiceItem {
   price: number;
 }
 
-/** Pending = em análise; Confirmed = aprovado; Rejected = recusado; Cancelled = desmarcado; Blocked = bloqueio de agenda. */
-export type AppointmentStatus = 'Pending' | 'Confirmed' | 'Rejected' | 'Cancelled' | 'Blocked';
+/**
+ * Pending = em análise; Confirmed = aprovado; Rejected = recusado; Expired = ficou 3 dias sem resposta;
+ * Cancelled = desmarcado; Blocked = bloqueio de agenda.
+ */
+export type AppointmentStatus = 'Pending' | 'Confirmed' | 'Rejected' | 'Expired' | 'Cancelled' | 'Blocked';
 
 export interface AppointmentItem {
   id: number;
@@ -22,6 +25,8 @@ export interface AppointmentItem {
   description?: string;
   referenceImages?: string[];
   people?: number;
+  /** Prazo para aprovar ou recusar (só nos pedidos em análise). */
+  expiresAt?: string | null;
 }
 
 export interface MyAppointment {

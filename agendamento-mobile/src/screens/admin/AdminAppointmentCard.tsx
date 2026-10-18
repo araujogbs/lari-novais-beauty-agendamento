@@ -27,6 +27,7 @@ const BADGES: Record<AppointmentStatus, { text: string; color: string }> = {
   Pending: { text: 'Em análise', color: '#B7791F' },
   Confirmed: { text: 'Confirmado', color: '#386641' },
   Rejected: { text: 'Recusado', color: '#9E2A2B' },
+  Expired: { text: 'Expirado sem resposta', color: '#9E2A2B' },
   Cancelled: { text: 'Cancelado', color: '#9E2A2B' },
   Blocked: { text: 'Bloqueado', color: THEME.text },
 };
@@ -40,7 +41,7 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
   const people = item.people ?? 1;
   const isPending = item.status === 'Pending';
   const isBlocked = item.status === 'Blocked';
-  const isInactive = item.status === 'Cancelled' || item.status === 'Rejected';
+  const isInactive = item.status === 'Cancelled' || item.status === 'Rejected' || item.status === 'Expired';
   const badge = BADGES[item.status] ?? BADGES.Confirmed;
 
   const run = async (action: () => Promise<void>) => {
@@ -102,6 +103,11 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
           </Text>
         )}
         <Text style={[styles.badgeText, { color: badge.color }]}>{badge.text}</Text>
+        {isPending && item.expiresAt ? (
+          <Text style={styles.deadlineText}>
+            Responder até {formatShortDateBR(item.expiresAt)}, {formatTimeBR(item.expiresAt)} (depois expira sozinho)
+          </Text>
+        ) : null}
 
         {/* Pedido em análise: aprovar ou recusar (com motivo opcional) */}
         {isPending && !rejecting && (
@@ -218,6 +224,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'uppercase',
+  },
+  deadlineText: {
+    marginTop: 2,
+    fontSize: 11,
+    color: THEME.textMuted,
   },
   decisionRow: {
     flexDirection: 'row',

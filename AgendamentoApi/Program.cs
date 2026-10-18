@@ -81,6 +81,8 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
 builder.Services.AddHttpClient<ITravelFeeService, TravelFeeService>();
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
+// Expira pedidos em análise sem resposta em 3 dias (veja AppointmentStatus.PendingExpiration)
+builder.Services.AddHostedService<PendingExpirationService>();
 
 var app = builder.Build();
 

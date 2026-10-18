@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AgendamentoApi.Models;
 
 namespace AgendamentoApi.Services;
 
@@ -22,7 +23,8 @@ public class WhatsAppService : IWhatsAppService
             $"Recebemos o seu pedido de agendamento para *{serviceName}*.\n" +
             $"📅 Data: {startTime:dd/MM/yyyy}\n" +
             $"🕘 Início: {startTime:HH:mm} • término previsto: {endTime:HH:mm}\n\n" +
-            "Ele está *em análise*. Assim que for confirmado, você recebe uma nova mensagem por aqui. Obrigada!");
+            "Ele está *em análise*. Assim que for confirmado, você recebe uma nova mensagem por aqui. " +
+            $"Se não houver resposta em até {AppointmentStatus.PendingExpiration.TotalDays:0} dias, o pedido expira e o horário é liberado. Obrigada!");
 
     public Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime) =>
         SendAsync(clientPhone,
@@ -41,6 +43,13 @@ public class WhatsAppService : IWhatsAppService
             (string.IsNullOrWhiteSpace(reason) ? "" : $"\nMotivo: {reason.Trim()}") +
             "\n\nSe quiser, responda esta mensagem para combinarmos outro horário. 💕");
 
+    public Task SendExpiredMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime) =>
+        SendAsync(clientPhone,
+            $"Olá {clientName}!\n\n" +
+            $"Não consegui confirmar a tempo o seu pedido de *{serviceName}* para {startTime:dd/MM/yyyy} às {startTime:HH:mm}, " +
+            "então ele expirou e o horário foi liberado. Desculpe pela demora!\n\n" +
+            "Se ainda quiser o atendimento, responda esta mensagem ou faça um novo pedido pelo site. 💕");
+
     public Task NotifyOwnerNewRequestAsync(string clientName, string clientPhone, string serviceName, DateTime startTime, DateTime endTime)
     {
         var ownerPhone = _configuration["WhatsApp:OwnerPhone"];
@@ -55,7 +64,7 @@ public class WhatsAppService : IWhatsAppService
             $"Cliente: {clientName} ({clientPhone})\n" +
             $"Serviço: {serviceName}\n" +
             $"📅 {startTime:dd/MM/yyyy}, das {startTime:HH:mm} às {endTime:HH:mm}\n\n" +
-            "Aprove ou recuse pelo Painel Ateliê no app.");
+            $"Aprove ou recuse pelo Painel Ateliê (site ou app) em até {AppointmentStatus.PendingExpiration.TotalDays:0} dias, senão o pedido expira.");
     }
 
     private async Task SendAsync(string phone, string messageText)

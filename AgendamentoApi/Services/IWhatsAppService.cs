@@ -11,6 +11,9 @@ public interface IWhatsAppService
     /// <summary>Para a cliente, quando a maquiadora recusa.</summary>
     Task SendRejectionMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, string? reason);
 
+    /// <summary>Para a cliente, quando o pedido expira sem resposta (prazo de AppointmentStatus.PendingExpiration).</summary>
+    Task SendExpiredMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime);
+
     /// <summary>Para a maquiadora (WhatsApp:OwnerPhone), avisando de um pedido novo para analisar.</summary>
     Task NotifyOwnerNewRequestAsync(string clientName, string clientPhone, string serviceName, DateTime startTime, DateTime endTime);
 }

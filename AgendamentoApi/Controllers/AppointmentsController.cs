@@ -16,26 +16,14 @@ public class AppointmentsController : ControllerBase
 {
     private static readonly TimeSpan WorkStart = new(6, 0, 0);
     private static readonly TimeSpan WorkEnd = new(22, 0, 0);
-    private static readonly TimeZoneInfo BrazilTz = ResolveBrazilTimeZone();
-
-    private static TimeZoneInfo ResolveBrazilTimeZone()
-    {
-        foreach (var id in new[] { "America/Sao_Paulo", "E. South America Standard Time" })
-        {
-            try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
-            catch (TimeZoneNotFoundException) { }
-            catch (InvalidTimeZoneException) { }
-        }
-        throw new InvalidOperationException("Fuso horário de Brasília não encontrado no sistema.");
-    }
+    private static readonly TimeZoneInfo BrazilTz = BrazilTime.Zone;
 
     // Data/hora local de Brasília (Kind Unspecified) -> UTC
     private static DateTime LocalToUtc(DateTime date, TimeSpan time) =>
         TimeZoneInfo.ConvertTimeToUtc(
             DateTime.SpecifyKind(date.Date + time, DateTimeKind.Unspecified), BrazilTz);
 
-    private static DateTime ToBrazil(DateTime utc) =>
-        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), BrazilTz);
+    private static DateTime ToBrazil(DateTime utc) => BrazilTime.FromUtc(utc);
 
     // O atendimento inteiro (início e fim) precisa estar no mesmo dia, dentro do expediente
     private static bool IsWithinWorkHours(DateTime startUtc, DateTime endUtc)
@@ -162,8 +150,7 @@ public class AppointmentsController : ControllerBase
         // 3. Regra de ouro: Verificar se existe sobreposição de horários
         // Existe sobreposição se: (InicioA < FimB) E (FimA > InicioB)
         bool hasConflict = await _context.Appointments
-            .AnyAsync(a => a.Status != AppointmentStatus.Cancelled &&
-                           a.Status != AppointmentStatus.Rejected &&
+            .AnyAsync(a => !AppointmentStatus.FreeSlot.Contains(a.Status) &&
                            startTimeUtc < a.EndTime &&
                            endTimeUtc > a.StartTime);
 
@@ -254,11 +241,8 @@ public class AppointmentsController : ControllerBase
             .FirstOrDefaultAsync(a => a.Id == id);
         if (appointment == null)
             return NotFound(new { message = "Agendamento não encontrado." });
-        if (appointment.Status != AppointmentStatus.Pending)
+        if (!await TryLeavePendingAsync(appointment, AppointmentStatus.Confirmed))
             return Conflict(new { message = "Este agendamento não está mais em análise." });
-
-        appointment.Status = AppointmentStatus.Confirmed;
-        await _context.SaveChangesAsync();
 
         var serviceName = appointment.ServiceItem?.Name ?? "Serviço";
         await _whatsAppService.SendConfirmationMessageAsync(
@@ -283,17 +267,27 @@ public class AppointmentsController : ControllerBase
             .FirstOrDefaultAsync(a => a.Id == id);
         if (appointment == null)
             return NotFound(new { message = "Agendamento não encontrado." });
-        if (appointment.Status != AppointmentStatus.Pending)
+        if (!await TryLeavePendingAsync(appointment, AppointmentStatus.Rejected))
             return Conflict(new { message = "Este agendamento não está mais em análise." });
-
-        appointment.Status = AppointmentStatus.Rejected;
-        await _context.SaveChangesAsync();
 
         await _whatsAppService.SendRejectionMessageAsync(
             appointment.ClientPhone, appointment.ClientName, appointment.ServiceItem?.Name ?? "Serviço",
             ToBrazil(appointment.StartTime), dto?.Reason);
 
         return Ok(appointment);
+    }
+
+    // Tira o pedido de "em análise" só se ele ainda estiver assim no banco (UPDATE ... WHERE Status = 'Pending').
+    // Evita que a aprovação sobrescreva um pedido que acabou de expirar, ou o contrário.
+    private async Task<bool> TryLeavePendingAsync(Appointment appointment, string newStatus)
+    {
+        if (appointment.Status != AppointmentStatus.Pending) return false;
+        var updated = await _context.Appointments
+            .Where(a => a.Id == appointment.Id && a.Status == AppointmentStatus.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.Status, newStatus));
+        if (updated == 0) return false;
+        appointment.Status = newStatus;
+        return true;
     }
 
     private static string BuildCalendarDescription(Appointment a)
@@ -447,8 +441,7 @@ public class AppointmentsController : ControllerBase
 
         // 4. Agendamentos e bloqueios (não cancelados) que tocam o expediente
         var existingAppointments = await _context.Appointments
-            .Where(a => a.Status != AppointmentStatus.Cancelled &&
-                        a.Status != AppointmentStatus.Rejected &&
+            .Where(a => !AppointmentStatus.FreeSlot.Contains(a.Status) &&
                         a.StartTime < workEndUtc &&
                         a.EndTime > workStartUtc)
             .ToListAsync();
@@ -525,8 +518,7 @@ public class AppointmentsController : ControllerBase
 
         // 4. Verificar conflitos com agendamentos existentes (exceto cancelados)
         bool hasConflict = await _context.Appointments
-            .AnyAsync(a => a.Status != AppointmentStatus.Cancelled &&
-                           a.Status != AppointmentStatus.Rejected &&
+            .AnyAsync(a => !AppointmentStatus.FreeSlot.Contains(a.Status) &&
                            startDateTime < a.EndTime &&
                            endDateTime > a.StartTime);
 

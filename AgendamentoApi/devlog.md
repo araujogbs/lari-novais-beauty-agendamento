@@ -142,6 +142,9 @@
 - As chamadas à API do app foram reunidas em `src/services/appointments.ts`.
 - Removidos `WeatherForecastController` e `WeatherForecast.cs` (resto do template do .NET) e atualizado o `AgendamentoApi.http`.
 - `CLAUDE.md` e `AGENTS.md` do app corrigidos (o projeto não usa Expo Router).
+- Agendamentos passam a nascer **em análise** (`Pending`), com aprovar/recusar no painel (app e site) e a cliente escolhendo o horário de **início**.
+- **Prazo de 3 dias** para pedidos em análise: o `PendingExpirationService` expira os parados (status `Expired`, migration `AdicionarStatusExpirado`), libera o horário e avisa a cliente. Aprovar, recusar e expirar usam `UPDATE ... WHERE Status = 'Pending'`, para um não sobrescrever o outro.
+- Corrigido o "hoje" do app (`todayISO`), que usava a data em UTC e virava o dia seguinte a partir das 21h; o site passou a usar Brasília também.
 
 ### 💡 Histórico que este diário não cobre (de 02/10 a 16/10)
 Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e painel protegido, constraint de exclusão contra horários sobrepostos, descrição e fotos de referência, taxa de deslocamento por CEP (BrasilAPI, OSRM e Nominatim), quantidade de pessoas, horário "pronta às" e atualização dos serviços do Social.
