@@ -134,3 +134,20 @@
 - [ ] Implementar a autenticação com JWT no ASP.NET Core (`Microsoft.AspNetCore.Authentication.JwtBearer`).
 - [ ] Proteger os endpoints administrativos de listagem e cancelamento com o atributo `[Authorize(Roles = "Admin")]`.
 - [ ] Configurar interceptores no Axios para transmissão automática do Bearer Token seguro no app mobile.
+## [2026-10-18] - Organização do projeto e divisão do App.tsx
+
+### 🛠️ O que foi feito
+- Os READMEs foram atualizados: preços do Social alinhados (Maquiagem R$ 350, Penteado R$ 350, Maquiagem + Penteado R$ 700, Escova e Babyliss R$ 300), caminhos entre os projetos corrigidos e estrutura de pastas refeita.
+- O `App.tsx` do app (cerca de 2.000 linhas) foi dividido em `src/screens`, `components`, `hooks`, `services`, `utils`, `styles` e `theme`. Mesmo comportamento: o `App.tsx` ficou só com a navegação entre telas.
+- As chamadas à API do app foram reunidas em `src/services/appointments.ts`.
+- Removidos `WeatherForecastController` e `WeatherForecast.cs` (resto do template do .NET) e atualizado o `AgendamentoApi.http`.
+- `CLAUDE.md` e `AGENTS.md` do app corrigidos (o projeto não usa Expo Router).
+
+### 💡 Histórico que este diário não cobre (de 02/10 a 16/10)
+Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e painel protegido, constraint de exclusão contra horários sobrepostos, descrição e fotos de referência, taxa de deslocamento por CEP (BrasilAPI, OSRM e Nominatim), quantidade de pessoas, horário "pronta às" e atualização dos serviços do Social.
+
+### 📌 Próximos Passos
+- [ ] Publicar: API com HTTPS, `.env.production` do site, CORS com o domínio do site, serviços cadastrados no banco de produção.
+- [ ] Ligar de verdade o WhatsApp e o Google Calendar (hoje só simulação em log).
+- [ ] Tirar `public/fotos/` (144 MB) do build do site.
+- [ ] Mover o IP da API do app (`src/services/api.ts`) para variável de ambiente do Expo.

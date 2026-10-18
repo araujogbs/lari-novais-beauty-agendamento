@@ -28,8 +28,8 @@ public class Appointment
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
 
-    // Estado do agendamento (ex: "Confirmado", "Cancelado")
-    public string Status { get; set; } = "Confirmed";
+    // Estado do agendamento (veja AppointmentStatus). Nasce em análise até a maquiadora aprovar.
+    public string Status { get; set; } = AppointmentStatus.Pending;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

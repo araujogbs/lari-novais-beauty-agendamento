@@ -149,21 +149,21 @@ public class AppointmentsController : ControllerBase
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
 
-        // 2. A cliente informa a hora em que precisa estar pronta (fim do atendimento);
-        //    o início é calculado voltando a duração total (serviço x pessoas).
+        // 2. A cliente informa o horário de início; o término é calculado somando a duração total (serviço x pessoas).
         var people = Math.Clamp(dto.People, 1, MaxPeople);
-        var endTimeUtc = dto.ReadyTime.UtcDateTime;
-        var startTimeUtc = endTimeUtc.AddMinutes(-service.DurationMinutes * people);
+        var startTimeUtc = dto.StartTime.UtcDateTime;
+        var endTimeUtc = startTimeUtc.AddMinutes(service.DurationMinutes * people);
 
         if (!IsWithinWorkHours(startTimeUtc, endTimeUtc))
         {
-            return BadRequest(new { message = "Esse horário não cabe no expediente (06:00 às 22:00) considerando o tempo total do serviço. Escolha um horário mais tarde." });
+            return BadRequest(new { message = "Esse horário não cabe no expediente (06:00 às 22:00) considerando o tempo total do serviço. Escolha um horário mais cedo." });
         }
 
         // 3. Regra de ouro: Verificar se existe sobreposição de horários
         // Existe sobreposição se: (InicioA < FimB) E (FimA > InicioB)
         bool hasConflict = await _context.Appointments
-            .AnyAsync(a => a.Status != "Cancelled" &&
+            .AnyAsync(a => a.Status != AppointmentStatus.Cancelled &&
+                           a.Status != AppointmentStatus.Rejected &&
                            startTimeUtc < a.EndTime &&
                            endTimeUtc > a.StartTime);
 
@@ -203,9 +203,9 @@ public class AppointmentsController : ControllerBase
             People = people,
             StartTime = startTimeUtc,
             EndTime = endTimeUtc,
-            Status = "Confirmed"
+            Status = AppointmentStatus.Pending // fica em análise até a maquiadora aprovar
         };
-_context.Appointments.Add(appointment);
+        _context.Appointments.Add(appointment);
         try
         {
             await _context.SaveChangesAsync();
@@ -218,27 +218,91 @@ _context.Appointments.Add(appointment);
             return Conflict(new { message = "O horário selecionado já se encontra ocupado. Escolha outro intervalo." });
         }
 
-    // 1. Notificação WhatsApp
-        await _whatsAppService.SendConfirmationMessageAsync(
-            clientPhone: appointment.ClientPhone,
-            clientName: appointment.ClientName,
-            serviceName: service.Name,
-            startTime: ToBrazil(appointment.StartTime),
-            readyTime: ToBrazil(appointment.EndTime)
-        );
+        // Pedido recebido: avisa a cliente (em análise) e a maquiadora (novo pedido).
+        // A confirmação e o evento no Google Calendar só acontecem quando a maquiadora aprova.
+        await _whatsAppService.SendRequestReceivedAsync(
+            appointment.ClientPhone, appointment.ClientName, service.Name,
+            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
+        await _whatsAppService.NotifyOwnerNewRequestAsync(
+            appointment.ClientName, appointment.ClientPhone, service.Name,
+            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
 
-        // 2. Criação automática no Google Calendar
- var eventTitle = $"{service.Name} - {appointment.ClientName}";
-        var eventDescription = $"Cliente: {appointment.ClientName}\nWhatsApp: {appointment.ClientPhone}\nEndereço: {appointment.ClientAddress}\nDescrição: {appointment.Description}\nFotos de referência: {appointment.ReferenceImages.Count}\nPessoas: {appointment.People}\nPronta às: {ToBrazil(appointment.EndTime):HH:mm}\nValor: R$ {service.Price * appointment.People:F2}" +
-            (appointment.TravelFee is decimal tf ? $"\nDeslocamento: {appointment.DistanceKm:F1} km • R$ {tf:F2}" : "");
-
-        await _calendarService.CreateEventAsync(
-            eventTitle,
-            eventDescription,
-            appointment.StartTime,
-            appointment.EndTime
-        );
         return CreatedAtAction(nameof(GetAppointments), new { id = appointment.Id }, appointment);
+    }
+
+    // GET: api/appointments/pending (pedidos futuros aguardando aprovação, de qualquer data)
+    [HttpGet("pending")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<IEnumerable<Appointment>>> GetPending()
+    {
+        var now = DateTime.UtcNow;
+        var list = await _context.Appointments
+            .Include(a => a.ServiceItem)
+            .Where(a => a.Status == AppointmentStatus.Pending && a.StartTime >= now)
+            .OrderBy(a => a.StartTime)
+            .ToListAsync();
+        return Ok(list);
+    }
+
+    // POST: api/appointments/5/approve (pedido em análise -> confirmado; avisa a cliente e cria o evento na agenda)
+    [HttpPost("{id}/approve")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Appointment>> Approve(int id)
+    {
+        var appointment = await _context.Appointments
+            .Include(a => a.ServiceItem)
+            .FirstOrDefaultAsync(a => a.Id == id);
+        if (appointment == null)
+            return NotFound(new { message = "Agendamento não encontrado." });
+        if (appointment.Status != AppointmentStatus.Pending)
+            return Conflict(new { message = "Este agendamento não está mais em análise." });
+
+        appointment.Status = AppointmentStatus.Confirmed;
+        await _context.SaveChangesAsync();
+
+        var serviceName = appointment.ServiceItem?.Name ?? "Serviço";
+        await _whatsAppService.SendConfirmationMessageAsync(
+            appointment.ClientPhone, appointment.ClientName, serviceName,
+            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
+        await _calendarService.CreateEventAsync(
+            $"{serviceName} - {appointment.ClientName}",
+            BuildCalendarDescription(appointment),
+            appointment.StartTime,
+            appointment.EndTime);
+
+        return Ok(appointment);
+    }
+
+    // POST: api/appointments/5/reject (pedido em análise -> recusado; libera o horário e avisa a cliente)
+    [HttpPost("{id}/reject")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Appointment>> Reject(int id, [FromBody] RejectAppointmentDto? dto)
+    {
+        var appointment = await _context.Appointments
+            .Include(a => a.ServiceItem)
+            .FirstOrDefaultAsync(a => a.Id == id);
+        if (appointment == null)
+            return NotFound(new { message = "Agendamento não encontrado." });
+        if (appointment.Status != AppointmentStatus.Pending)
+            return Conflict(new { message = "Este agendamento não está mais em análise." });
+
+        appointment.Status = AppointmentStatus.Rejected;
+        await _context.SaveChangesAsync();
+
+        await _whatsAppService.SendRejectionMessageAsync(
+            appointment.ClientPhone, appointment.ClientName, appointment.ServiceItem?.Name ?? "Serviço",
+            ToBrazil(appointment.StartTime), dto?.Reason);
+
+        return Ok(appointment);
+    }
+
+    private static string BuildCalendarDescription(Appointment a)
+    {
+        var price = (a.ServiceItem?.Price ?? 0) * a.People;
+        return $"Cliente: {a.ClientName}\nWhatsApp: {a.ClientPhone}\nEndereço: {a.ClientAddress}\nDescrição: {a.Description}\n" +
+               $"Fotos de referência: {a.ReferenceImages.Count}\nPessoas: {a.People}\n" +
+               $"Início: {ToBrazil(a.StartTime):HH:mm} • Término previsto: {ToBrazil(a.EndTime):HH:mm}\nValor: R$ {price:F2}" +
+               (a.TravelFee is decimal tf ? $"\nDeslocamento: {a.DistanceKm:F1} km • R$ {tf:F2}" : "");
     }
 
 
@@ -261,11 +325,12 @@ _context.Appointments.Add(appointment);
         }
 
         // Telefones são salvos com máscara; a comparação por dígitos é feita em memória
-        // sobre os futuros confirmados (conjunto pequeno).
+        // sobre os futuros em análise ou confirmados (conjunto pequeno).
         var now = DateTime.UtcNow;
         var future = await _context.Appointments
             .Include(a => a.ServiceItem)
-            .Where(a => a.Status == "Confirmed" && a.StartTime >= now)
+            .Where(a => (a.Status == AppointmentStatus.Pending || a.Status == AppointmentStatus.Confirmed) &&
+                        a.StartTime >= now)
             .OrderBy(a => a.StartTime)
             .ToListAsync();
 
@@ -298,18 +363,19 @@ _context.Appointments.Add(appointment);
 
         // Mesma resposta para "não existe" e "telefone não confere", para não revelar agendamentos de terceiros
         if (appointment == null ||
-            appointment.Status != "Confirmed" ||
+            (appointment.Status != AppointmentStatus.Pending && appointment.Status != AppointmentStatus.Confirmed) ||
             NormalizePhone(appointment.ClientPhone) != NormalizePhone(dto.Phone))
         {
             return NotFound(new { message = "Agendamento não encontrado para este telefone." });
         }
 
-        if (appointment.StartTime <= DateTime.UtcNow.AddHours(24))
+        // Pedido ainda em análise pode ser retirado a qualquer momento; confirmado só com mais de 24 h
+        if (appointment.Status == AppointmentStatus.Confirmed && appointment.StartTime <= DateTime.UtcNow.AddHours(24))
         {
             return BadRequest(new { message = "Cancelamentos com menos de 24 horas de antecedência devem ser feitos pelo WhatsApp." });
         }
 
-        appointment.Status = "Cancelled";
+        appointment.Status = AppointmentStatus.Cancelled;
         await _context.SaveChangesAsync();
 
         return NoContent();
@@ -352,7 +418,7 @@ _context.Appointments.Add(appointment);
     }
 
     // GET: api/appointments/available-slots?date=2026-09-27&serviceId=1&people=2
-    // Devolve os horários em que a cliente pode ESTAR PRONTA (fim do atendimento).
+    // Devolve os horários de INÍCIO em que o atendimento inteiro (serviço x pessoas) cabe livre no expediente.
     [HttpGet("available-slots")]
     public async Task<ActionResult<IEnumerable<string>>> GetAvailableSlots([FromQuery] string date, [FromQuery] int serviceId, [FromQuery] int people = 1)
     {
@@ -381,39 +447,46 @@ _context.Appointments.Add(appointment);
 
         // 4. Agendamentos e bloqueios (não cancelados) que tocam o expediente
         var existingAppointments = await _context.Appointments
-            .Where(a => a.Status != "Cancelled" &&
+            .Where(a => a.Status != AppointmentStatus.Cancelled &&
+                        a.Status != AppointmentStatus.Rejected &&
                         a.StartTime < workEndUtc &&
                         a.EndTime > workStartUtc)
             .ToListAsync();
 
         var availableSlots = new List<string>();
 
-        // 5. Percorrer os horários de "pronta" em blocos de 30 minutos. O atendimento ocupa
-        //    [pronta - duração total, pronta] e precisa caber inteiro no expediente.
-        for (var ready = workStartUtc; ready <= workEndUtc; ready = ready.AddMinutes(SlotStepMinutes))
+        // 5. Percorrer os horários de início em blocos de 30 minutos. O atendimento ocupa
+        //    [início, início + duração total] e precisa caber inteiro no expediente.
+        for (var start = workStartUtc; start < workEndUtc; start = start.AddMinutes(SlotStepMinutes))
         {
-            var start = ready.AddMinutes(-totalMinutes);
-            if (start < workStartUtc) continue;
+            var end = start.AddMinutes(totalMinutes);
+            if (end > workEndUtc) break;
 
             // Verifica colisão: (InicioNovo < FimExistente) E (FimNovo > InicioExistente)
             bool isBusy = existingAppointments.Any(a =>
-                start < a.EndTime && ready > a.StartTime);
+                start < a.EndTime && end > a.StartTime);
 
             if (!isBusy)
             {
                 // Retorna em horário local de Brasília
-                availableSlots.Add(TimeZoneInfo.ConvertTimeFromUtc(ready, BrazilTz).ToString("HH:mm"));
+                availableSlots.Add(TimeZoneInfo.ConvertTimeFromUtc(start, BrazilTz).ToString("HH:mm"));
             }
         }
 
         return Ok(availableSlots);
     }
 
-    // PATCH: api/appointments/5/status
+    // PATCH: api/appointments/5/status (desmarcar atendimento ou desbloquear agenda; body: "Cancelled")
+    // Aprovar e recusar pedidos usam /approve e /reject, que também avisam a cliente.
     [HttpPatch("{id}/status")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] string newStatus)
     {
+        if (newStatus != AppointmentStatus.Cancelled)
+        {
+            return BadRequest(new { message = "Só é possível mudar para \"Cancelled\" por aqui. Para aprovar ou recusar, use /approve ou /reject." });
+        }
+
         var appointment = await _context.Appointments.FindAsync(id);
         if (appointment == null)
         {
@@ -452,7 +525,8 @@ _context.Appointments.Add(appointment);
 
         // 4. Verificar conflitos com agendamentos existentes (exceto cancelados)
         bool hasConflict = await _context.Appointments
-            .AnyAsync(a => a.Status != "Cancelled" &&
+            .AnyAsync(a => a.Status != AppointmentStatus.Cancelled &&
+                           a.Status != AppointmentStatus.Rejected &&
                            startDateTime < a.EndTime &&
                            endDateTime > a.StartTime);
 
@@ -488,7 +562,7 @@ _context.Appointments.Add(appointment);
             ServiceItemId = service.Id,
             StartTime = startDateTime,
             EndTime = endDateTime,
-            Status = "Blocked",
+            Status = AppointmentStatus.Blocked,
             CreatedAt = DateTime.UtcNow
         };
 

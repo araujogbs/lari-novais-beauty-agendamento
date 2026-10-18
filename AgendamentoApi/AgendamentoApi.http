@@ -1,6 +1,15 @@
 @AgendamentoApi_HostAddress = http://localhost:5102
 
-GET {{AgendamentoApi_HostAddress}}/weatherforecast/
+### Serviços ativos
+GET {{AgendamentoApi_HostAddress}}/api/services
+Accept: application/json
+
+### Horários livres (serviceId, data AAAA-MM-DD e pessoas)
+GET {{AgendamentoApi_HostAddress}}/api/appointments/available-slots?date=2026-12-01&serviceId=1&people=1
+Accept: application/json
+
+### Taxa de deslocamento a partir do CEP
+GET {{AgendamentoApi_HostAddress}}/api/appointments/estimate-fee?cep=01310100
 Accept: application/json
 
 ###
