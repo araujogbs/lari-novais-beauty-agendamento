@@ -4,7 +4,7 @@ Sistema completo de agendamento para uma maquiadora que atende a domicílio: a *
 
 - **Backend:** ASP.NET Core Web API (.NET 10), Entity Framework Core e PostgreSQL
 - **Mobile:** React Native + Expo (SDK 57), TypeScript e Axios
-- **Integrações:** WhatsApp (confirmação) e Google Calendar (evento automático) — ambas rodam em modo simulação até serem configuradas
+- **Integrações:** WhatsApp (avisos à cliente e à maquiadora) e Google Calendar (evento automático) — ambas rodam em modo simulação até serem configuradas
 
 ---
 
@@ -37,7 +37,7 @@ Sistema completo de agendamento para uma maquiadora que atende a domicílio: a *
 
 ### Maquiadora (Painel Ateliê)
 Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha). O mesmo painel existe no site, em `/#painel` (veja o README do Site).
-- **Pedidos em análise** no topo do painel (de qualquer data), com **Aprovar** e **Recusar** (com motivo opcional). Só depois de aprovar a cliente recebe a confirmação e o evento vai para o Google Calendar.
+- **Pedidos em análise** no topo do painel (de qualquer data), com **Aprovar** e **Recusar** (com motivo opcional) e o prazo para responder (3 dias; depois o pedido expira sozinho). Só depois de aprovar a cliente recebe a confirmação e o evento vai para o Google Calendar.
 - Lista de atendimentos por dia, com serviço, horário, WhatsApp, endereço, descrição do pedido e **fotos de referência**.
 - **Atalho do WhatsApp:** abre a conversa com uma mensagem de confirmação pronta.
 - **Atalho do mapa:** abre o endereço no Google Maps (só aparece se houver endereço).
@@ -64,12 +64,15 @@ API e App/
 │   ├── DTOs/
 │   │   ├── CreateAppointmentDto.cs    # Criação (multipart: dados + imagens)
 │   │   ├── BlockSlotDto.cs            # Bloqueio de agenda
+│   │   ├── RejectAppointmentDto.cs    # Motivo opcional da recusa
 │   │   └── MyAppointmentDto.cs        # Resposta enxuta da cliente + ClientCancelDto
-│   ├── Models/                        # Appointment, ServiceItem
+│   ├── Models/                        # Appointment, ServiceItem, AppointmentStatus (status e prazo de 3 dias)
 │   ├── Services/
 │   │   ├── TravelFeeService.cs        # CEP -> distância -> taxa de deslocamento
-│   │   ├── WhatsAppService.cs         # Confirmação por WhatsApp (interface + implementação)
-│   │   └── GoogleCalendarService.cs   # Evento no Google Calendar (interface + implementação)
+│   │   ├── WhatsAppService.cs         # Mensagens por WhatsApp (interface + implementação)
+│   │   ├── GoogleCalendarService.cs   # Evento no Google Calendar (interface + implementação)
+│   │   ├── PendingExpirationService.cs # Tarefa em segundo plano que expira pedidos sem resposta
+│   │   └── BrazilTime.cs              # Fuso de Brasília
 │   ├── Migrations/                    # Histórico do banco
 │   ├── uploads/                       # Fotos enviadas (criada em runtime, fora do Git)
 │   ├── devlog.md                      # Diário de desenvolvimento
@@ -89,7 +92,7 @@ API e App/
         │   ├── MyAppointmentsScreen.tsx # Consulta e cancelamento pelo WhatsApp
         │   ├── AdminLoginScreen.tsx     # Login da maquiadora
         │   └── admin/                   # Painel Ateliê
-        │       ├── AdminScreen.tsx        # Agenda do dia
+        │       ├── AdminScreen.tsx        # Pedidos em análise e agenda do dia
         │       ├── AdminAppointmentCard.tsx
         │       └── BlockSchedule.tsx      # Bloqueio de dia ou intervalo
         ├── components/                # AppHeader, Toast, Lightbox, Stepper, Skeleton
@@ -123,6 +126,7 @@ O site institucional fica em `../Site` e usa a mesma API (veja o [README do Site
 - **Descrição** é obrigatória (até 1000 caracteres); **fotos** são opcionais (máx. 5, 5 MB cada).
 - **Cancelamento pela cliente:** pedido em análise pode ser cancelado a qualquer momento; confirmado, só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
 - **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
+  - A distância é medida a partir do ponto de partida da maquiadora (`TravelFee:OriginLatitude`/`OriginLongitude`, nos segredos). Sem esse ponto configurado, a API não calcula taxa e o agendamento segue sem ela.
   - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 3,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
   - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
   - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
@@ -196,8 +200,8 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 | GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. `people` é opcional (padrão 1, máx. 20) |
 | POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
-| GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros confirmados daquele telefone |
-| POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater e faltar mais de 24 h |
+| GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros em análise ou confirmados daquele telefone (com `status`) |
+| POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater: pedido em análise a qualquer momento, confirmado só com mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
 | GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data (cada um com `expiresAt`, o prazo para responder) |
 | POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, envia a confirmação por WhatsApp e cria o evento no Google Calendar. `409` se não estiver mais em análise |
@@ -231,16 +235,21 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `WhatsApp:ApiUrl` / `WhatsApp:ApiKey` | Não | Sem isso, a mensagem só aparece no log (simulação) |
 | `WhatsApp:OwnerPhone` | Não | WhatsApp da maquiadora (ex.: `5511914834786`) para receber aviso de cada pedido novo |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
-| `TravelFee:*` | Não | Já em `appsettings.json`: `OriginAddress`, `OriginCep`, `OriginLatitude`/`OriginLongitude`, `FreeRadiusKm` (5.0) e `PricePerKm` (3.00) |
+| `TravelFee:OriginLatitude` / `TravelFee:OriginLongitude` | Sim, para cobrar deslocamento | Coordenadas do ponto de partida da maquiadora. **Dado pessoal: só nos segredos**, nunca no repositório. Sem elas, a taxa não é calculada |
+| `TravelFee:FreeRadiusKm` / `TravelFee:PricePerKm` | Não | Já em `appsettings.json`: 5.0 km grátis e R$ 3,00 por km |
 | `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
 
 ```bash
 cd AgendamentoApi
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=agendamento;Username=postgres;Password=..."
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=agendamento_db;Username=postgres;Password=..."
 dotnet user-secrets set "Jwt:Key" "uma-chave-aleatoria-com-pelo-menos-32-caracteres"
 dotnet user-secrets set "Admin:Username" "lari"
 dotnet user-secrets set "Admin:PasswordHash" "<hash gerado>"
+dotnet user-secrets set "TravelFee:OriginLatitude" "<latitude do ponto de partida>"
+dotnet user-secrets set "TravelFee:OriginLongitude" "<longitude do ponto de partida>"
 ```
+
+`dotnet user-secrets list` mostra o que já está definido na máquina. O `dotnet ef` também lê esses segredos.
 
 **Gerando o `Admin:PasswordHash`:** num projeto de console temporário (fora do repositório), com o pacote `Microsoft.AspNetCore.Identity`:
 
@@ -279,7 +288,7 @@ Edite `src/services/api.ts` e coloque o **IP da sua máquina** em `baseURL` (ex.
 npx expo start --clear
 ```
 
-Comandos úteis no app: `npx tsc --noEmit` (tipos) e `npx expo-doctor` (diagnóstico). Instale pacotes sempre com `npx expo install <pacote>`, para o Expo escolher a versão compatível.
+Comandos úteis no app: `npx tsc --noEmit` (tipos), `npm run lint` (ESLint do Expo) e `npx expo-doctor` (diagnóstico). Instale pacotes sempre com `npx expo install <pacote>`, para o Expo escolher a versão compatível.
 
 ---
 
@@ -310,7 +319,7 @@ Já implementado:
 - Fotos das clientes só são servidas por rota autenticada.
 - Cancelamento pela cliente devolve a **mesma resposta** para "não existe" e "telefone não confere", sem revelar agendamentos de terceiros.
 - O app não registra senhas nem tokens nos logs.
-- Segredos fora do Git (User Secrets e variáveis de ambiente).
+- Segredos e dados pessoais fora do Git (User Secrets e variáveis de ambiente): conexão do banco, chave JWT, login do painel e ponto de partida da maquiadora.
 - `POST /api/services` exige papel `Admin`; o `Id` enviado pelo cliente é ignorado.
 - **Limite de requisições por IP** (`429`): login 5/min, consulta e cancelamento de agendamentos 10/min, criação de agendamentos 10 a cada 10 min. Dificulta força bruta de senha e a descoberta de telefones.
 - **CORS restrito:** em produção só as origens de `Cors:AllowedOrigins`; liberado geral apenas em desenvolvimento, e só com os métodos e headers necessários.

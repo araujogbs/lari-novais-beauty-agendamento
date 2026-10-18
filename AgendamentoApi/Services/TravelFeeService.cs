@@ -5,10 +5,11 @@ namespace AgendamentoApi.Services;
 
 public class TravelFeeOptions
 {
-    public string OriginAddress { get; set; } = string.Empty;
-    public string OriginCep { get; set; } = string.Empty;
+    // Ponto de partida da maquiadora. É dado pessoal: fica em User Secrets / variável de ambiente
+    // (TravelFee__OriginLatitude, TravelFee__OriginLongitude), nunca no repositório.
     public double OriginLatitude { get; set; }
     public double OriginLongitude { get; set; }
+    public bool HasOrigin => OriginLatitude != 0 || OriginLongitude != 0;
     public double FreeRadiusKm { get; set; } = 5.0;
     public decimal PricePerKm { get; set; } = 3.00m;
 }
@@ -32,12 +33,15 @@ public class TravelFeeService : ITravelFeeService
         _http = http;
         _logger = logger;
         _opt = config.GetSection("TravelFee").Get<TravelFeeOptions>() ?? new TravelFeeOptions();
+        if (!_opt.HasOrigin)
+            _logger.LogWarning("TravelFee:OriginLatitude/OriginLongitude não configurados: a taxa de deslocamento não será calculada.");
     }
 
     public async Task<TravelFeeResult?> EstimateAsync(string cep, CancellationToken ct = default)
     {
         var digits = new string((cep ?? string.Empty).Where(char.IsDigit).ToArray());
-        if (digits.Length != 8) return null;
+        // Sem origem a distância sairia de (0, 0) e a taxa seria absurda; segue sem taxa, como CEP não localizado
+        if (digits.Length != 8 || !_opt.HasOrigin) return null;
 
         string street = "", neighborhood = "", city = "", state = "";
         double? lat = null, lon = null;
