@@ -1,10 +1,57 @@
 # Lari Novais Beauty — Agendamento de Maquiagem a Domicílio
 
-Sistema completo de agendamento para uma maquiadora que atende a domicílio: a **cliente** escolhe o serviço, o dia e o horário, descreve o que deseja e anexa fotos de referência; a **maquiadora** gerencia tudo por um painel protegido por login.
+Sistema de agendamento feito para uma maquiadora profissional de São Paulo que atende a domicílio. A **cliente** escolhe o serviço, o dia e o horário de início, descreve o que deseja, anexa fotos de referência e já vê a taxa de deslocamento calculada pelo CEP. A **maquiadora** aprova ou recusa cada pedido num painel protegido por login, e os avisos saem pelo WhatsApp.
 
-- **Backend:** ASP.NET Core Web API (.NET 10), Entity Framework Core e PostgreSQL
-- **Mobile:** React Native + Expo (SDK 57), TypeScript e Axios
-- **Integrações:** WhatsApp (avisos à cliente e à maquiadora) e Google Calendar (evento automático) — ambas rodam em modo simulação até serem configuradas
+Este repositório reúne a **API** (.NET) e o **app** (React Native). O site institucional, que usa a mesma API, está em [lari-novais-beauty-site](https://github.com/araujogbs/lari-novais-beauty-site).
+
+<p align="center">
+  <img src="docs/app-inicio.jpg" width="200" alt="Tela inicial do app" />
+  <img src="docs/app-servicos.jpg" width="200" alt="Escolha do serviço" />
+  <img src="docs/app-horarios.jpg" width="200" alt="Calendário e horários livres" />
+  <img src="docs/app-painel.jpg" width="200" alt="Painel da maquiadora com pedidos em análise" />
+</p>
+<p align="center"><sub>App: início, serviços, horários livres e painel da maquiadora (dados fictícios)</sub></p>
+
+## Como funciona
+
+```mermaid
+flowchart LR
+    App["App<br/>React Native + Expo"] -->|"REST (JWT no painel)"| API
+    Site["Site<br/>React + Vite<br/>(outro repositório)"] -->|"REST (JWT no painel)"| API
+    API["API<br/>ASP.NET Core .NET 10"] --> DB[("PostgreSQL")]
+    API --> WA["WhatsApp<br/>avisos"]
+    API --> GC["Google Calendar<br/>eventos"]
+    API --> GEO["BrasilAPI · OSRM<br/>CEP e distância"]
+```
+
+1. A cliente faz o pedido pelo app ou pelo site. Ele nasce **em análise** e já segura o horário.
+2. A maquiadora recebe o aviso e **aprova** (a cliente recebe a confirmação e o evento vai para a agenda) ou **recusa** (com motivo opcional).
+3. Sem resposta em **3 dias**, uma tarefa em segundo plano expira o pedido, libera o horário e avisa a cliente.
+
+## Destaques técnicos
+
+- **Sem conflito de horários, nem com pedidos simultâneos:** a regra é checada no código e garantida por uma *exclusion constraint* do PostgreSQL (índice GiST com `tstzrange`).
+- **Fluxo de aprovação com estados** (`Pending` → `Confirmed` / `Rejected` / `Expired`) e um `BackgroundService` que expira pedidos parados. Aprovar, recusar e expirar usam `UPDATE` condicional, o que evita condição de corrida entre a maquiadora e a tarefa automática.
+- **Taxa de deslocamento calculada no servidor:** CEP → coordenadas (BrasilAPI, com Nominatim de reserva) → distância de carro (OSRM, com Haversine de reserva). O valor enviado pelo cliente nunca é confiado.
+- **Segurança:** JWT com papel `Admin`, senha guardada em hash, limite de requisições por IP, upload validado pelos bytes do arquivo, fotos servidas só por rota autenticada e segredos (incluindo dados pessoais) fora do Git.
+- **Fuso de Brasília de ponta a ponta:** tudo em UTC no banco, com conversão na entrada e na saída.
+- **App organizado por responsabilidade:** telas, componentes, hooks, serviços de API e utilitários separados, com TypeScript e ESLint.
+
+## Stack
+
+| Parte | Tecnologias |
+|---|---|
+| API | ASP.NET Core (.NET 10), Entity Framework Core, PostgreSQL (Npgsql), JWT Bearer, Swagger |
+| App | React Native 0.86, Expo SDK 57, TypeScript, Axios, react-native-calendars |
+| Integrações | WhatsApp e Google Calendar (em modo simulação até serem configuradas), BrasilAPI, Nominatim, OSRM |
+
+O mesmo painel da maquiadora também existe no site:
+
+<p align="center"><img src="docs/painel-site.png" width="640" alt="Painel Ateliê no site, com pedidos em análise e agenda do dia" /></p>
+
+---
+
+A seguir, a documentação técnica completa: regras de negócio, modelo de dados, referência da API, configuração e como rodar.
 
 ---
 
