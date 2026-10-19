@@ -1,0 +1,69 @@
+# Produção da AgendamentoApi: PostgreSQL + API + Caddy (HTTPS automático).
+# Uso no servidor:  cp .env.example .env  (preencha)  &&  docker compose up -d --build
+name: lari
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agendamento_db
+      POSTGRES_USER: agendamento
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agendamento -d agendamento_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ../AgendamentoApi
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=agendamento_db;Username=agendamento;Password=${POSTGRES_PASSWORD}
+      Database__MigrateOnStartup: "true"
+      Jwt__Key: ${JWT_KEY:?defina JWT_KEY no .env}
+      Admin__Username: ${ADMIN_USERNAME:?defina ADMIN_USERNAME no .env}
+      Admin__PasswordHash: ${ADMIN_PASSWORD_HASH:?defina ADMIN_PASSWORD_HASH no .env}
+      Cors__AllowedOrigins__0: https://${SITE_DOMAIN}
+      Cors__AllowedOrigins__1: https://www.${SITE_DOMAIN}
+      TravelFee__OriginLatitude: ${TRAVEL_ORIGIN_LATITUDE:-0}
+      TravelFee__OriginLongitude: ${TRAVEL_ORIGIN_LONGITUDE:-0}
+      WhatsApp__ApiUrl: ${WHATSAPP_API_URL:-}
+      WhatsApp__ApiKey: ${WHATSAPP_API_KEY:-}
+      WhatsApp__OwnerPhone: ${WHATSAPP_OWNER_PHONE:-}
+      # Sem o arquivo secrets/google-calendar.json, os eventos ficam só no log (simulação)
+      GoogleCalendar__CredentialsJsonPath: /secrets/google-calendar.json
+      GoogleCalendar__CalendarId: ${GOOGLE_CALENDAR_ID:-}
+    volumes:
+      - uploads:/data/uploads
+      - ./secrets:/secrets:ro
+    # Sem "ports": a API só é acessível pelo Caddy, na rede interna do Docker
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?defina API_DOMAIN no .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

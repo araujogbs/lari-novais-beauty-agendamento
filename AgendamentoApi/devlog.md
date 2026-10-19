@@ -154,3 +154,21 @@ Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e p
 - [ ] Ligar de verdade o WhatsApp e o Google Calendar (hoje só simulação em log).
 - [ ] Tirar `public/fotos/` (144 MB) do build do site.
 - [ ] Mover o IP da API do app (`src/services/api.ts`) para variável de ambiente do Expo.
+
+## [2026-10-19] - Preparação para produção e calendário de disponibilidade
+
+### 🛠️ O que foi feito
+- **Deploy:** `Dockerfile` da API e pasta `deploy/` com `docker-compose` (PostgreSQL + API + Caddy com HTTPS automático), `.env.example`, `seed-servicos.sql` e `backup.sh`.
+- **Proxy reverso:** fora de desenvolvimento a API usa `UseForwardedHeaders`. Sem isso, atrás do Caddy todo mundo teria o IP do proxy e dividiria a mesma cota do rate limiting (5 logins por minuto para o site inteiro).
+- **Fotos em volume:** a pasta de uploads vem de `Storage:UploadsPath` (no Docker, `/data/uploads`), para não sumir a cada deploy.
+- **Migrations ao subir** com `Database:MigrateOnStartup` e rota `GET /health` para monitoramento.
+- **Novo endpoint `GET /appointments/availability`:** quantos horários livres há em cada dia de um período, numa consulta só. Alimenta o calendário do site (dias livres, últimos horários e lotados).
+- O cálculo de horários foi extraído para `ComputeSlots` (usado pelos dois endpoints) e passou a **pular horários que já passaram**.
+
+### 💡 Aprendizados Técnicos
+- Atrás de proxy, `RemoteIpAddress` é o IP do proxy. O `ForwardedHeadersOptions` só confia em proxies conhecidos (por padrão, o loopback); no Docker o Caddy está em outra rede, então foi preciso limpar `KnownIPNetworks`/`KnownProxies`, o que só é seguro porque a porta da API não é exposta.
+
+### 📌 Próximos Passos
+- [ ] Contratar domínio e VPS e seguir o `deploy/README.md`.
+- [ ] Recusar `startTime` no passado também no `POST /appointments`.
+- [ ] Ajustar o `WhatsAppService` ao formato da Evolution API v2 ao ligar o WhatsApp.

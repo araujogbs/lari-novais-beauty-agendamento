@@ -51,10 +51,13 @@ public class AppointmentsController : ControllerBase
         IWhatsAppService whatsAppService,
         IGoogleCalendarService calendarService, // Injetado aqui
         ITravelFeeService travelFeeService,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        IConfiguration configuration)
     {
         _context = context;
-        _uploadsDir = Path.Combine(env.ContentRootPath, "uploads");
+        // No servidor aponta para um volume persistente (Storage__UploadsPath), senão as fotos somem a cada deploy
+        var uploadsPath = configuration["Storage:UploadsPath"];
+        _uploadsDir = string.IsNullOrWhiteSpace(uploadsPath) ? Path.Combine(env.ContentRootPath, "uploads") : uploadsPath;
         _whatsAppService = whatsAppService;
         _calendarService = calendarService;
         _travelFeeService = travelFeeService;
@@ -435,38 +438,88 @@ public class AppointmentsController : ControllerBase
         }
         var totalMinutes = service.DurationMinutes * people;
 
-        // 3. Expediente (06:00-22:00 em Brasília) convertido para UTC
-        var workStartUtc = LocalToUtc(parsedDate, WorkStart);
-        var workEndUtc = LocalToUtc(parsedDate, WorkEnd);
+        // 3. Agendamentos e bloqueios (não cancelados) que tocam o expediente (06:00-22:00 em Brasília)
+        var existingAppointments = await BusyIntervalsAsync(LocalToUtc(parsedDate, WorkStart), LocalToUtc(parsedDate, WorkEnd));
 
-        // 4. Agendamentos e bloqueios (não cancelados) que tocam o expediente
-        var existingAppointments = await _context.Appointments
+        return Ok(ComputeSlots(parsedDate, totalMinutes, existingAppointments));
+    }
+
+    private const int MaxAvailabilityDays = 62;
+
+    // GET: api/appointments/availability?from=2026-10-19&days=31&serviceId=1&people=1
+    // Quantos horários de início livres há em cada dia do período (o calendário do site marca os dias livres e lotados).
+    [HttpGet("availability")]
+    public async Task<IActionResult> GetAvailability([FromQuery] string from, [FromQuery] int days, [FromQuery] int serviceId, [FromQuery] int people = 1)
+    {
+        if (!DateTime.TryParse(from, out var fromDate))
+        {
+            return BadRequest(new { message = "Formato de data inválido. Use AAAA-MM-DD." });
+        }
+
+        if (days < 1 || days > MaxAvailabilityDays)
+        {
+            return BadRequest(new { message = $"O período deve ter de 1 a {MaxAvailabilityDays} dias." });
+        }
+
+        var service = await _context.Services.FindAsync(serviceId);
+        if (service == null || !service.IsActive)
+        {
+            return BadRequest(new { message = "Serviço inválido ou inativo." });
+        }
+
+        if (people < 1 || people > MaxPeople)
+        {
+            return BadRequest(new { message = $"A quantidade de pessoas deve ser de 1 a {MaxPeople}." });
+        }
+        var totalMinutes = service.DurationMinutes * people;
+
+        // Uma consulta só para o período inteiro
+        var existingAppointments = await BusyIntervalsAsync(
+            LocalToUtc(fromDate, WorkStart), LocalToUtc(fromDate.AddDays(days - 1), WorkEnd));
+
+        var result = Enumerable.Range(0, days).Select(i =>
+        {
+            var day = fromDate.Date.AddDays(i);
+            return new { date = day.ToString("yyyy-MM-dd"), slots = ComputeSlots(day, totalMinutes, existingAppointments).Count };
+        });
+
+        return Ok(result);
+    }
+
+    // Agendamentos e bloqueios que ocupam a agenda e tocam o intervalo [inicioUtc, fimUtc]
+    private Task<List<Appointment>> BusyIntervalsAsync(DateTime startUtc, DateTime endUtc) =>
+        _context.Appointments
             .Where(a => !AppointmentStatus.FreeSlot.Contains(a.Status) &&
-                        a.StartTime < workEndUtc &&
-                        a.EndTime > workStartUtc)
+                        a.StartTime < endUtc &&
+                        a.EndTime > startUtc)
             .ToListAsync();
 
-        var availableSlots = new List<string>();
+    // Horários de INÍCIO livres num dia, em blocos de 30 minutos. O atendimento ocupa
+    // [início, início + duração total], precisa caber inteiro no expediente e não pode começar no passado.
+    private static List<string> ComputeSlots(DateTime day, int totalMinutes, List<Appointment> existingAppointments)
+    {
+        var workStartUtc = LocalToUtc(day, WorkStart);
+        var workEndUtc = LocalToUtc(day, WorkEnd);
+        var now = DateTime.UtcNow;
+        var slots = new List<string>();
 
-        // 5. Percorrer os horários de início em blocos de 30 minutos. O atendimento ocupa
-        //    [início, início + duração total] e precisa caber inteiro no expediente.
         for (var start = workStartUtc; start < workEndUtc; start = start.AddMinutes(SlotStepMinutes))
         {
             var end = start.AddMinutes(totalMinutes);
             if (end > workEndUtc) break;
+            if (start <= now) continue;
 
             // Verifica colisão: (InicioNovo < FimExistente) E (FimNovo > InicioExistente)
-            bool isBusy = existingAppointments.Any(a =>
-                start < a.EndTime && end > a.StartTime);
+            bool isBusy = existingAppointments.Any(a => start < a.EndTime && end > a.StartTime);
 
             if (!isBusy)
             {
                 // Retorna em horário local de Brasília
-                availableSlots.Add(TimeZoneInfo.ConvertTimeFromUtc(start, BrazilTz).ToString("HH:mm"));
+                slots.Add(TimeZoneInfo.ConvertTimeFromUtc(start, BrazilTz).ToString("HH:mm"));
             }
         }
 
-        return Ok(availableSlots);
+        return slots;
     }
 
     // PATCH: api/appointments/5/status (desmarcar atendimento ou desbloquear agenda; body: "Cancelled")

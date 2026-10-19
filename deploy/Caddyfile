@@ -1,0 +1,6 @@
+# O Caddy emite e renova o certificado HTTPS sozinho (Let's Encrypt)
+# e repassa X-Forwarded-For / X-Forwarded-Proto para a API.
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy api:8080
+}

@@ -2,14 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using AgendamentoApi.Data;
 using AgendamentoApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Threading.RateLimiting;
-
-
-
-
-
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Configurar CORS
@@ -27,6 +23,16 @@ builder.Services.AddCors(options =>
             policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
         // sem origens e fora de desenvolvimento: nenhuma origem de navegador é liberada
     });
+});
+
+// Em produção a API fica atrás do Caddy (deploy/), que termina o HTTPS e repassa o IP real da cliente
+// em X-Forwarded-For. Sem isto, todo mundo teria o IP do proxy e dividiria a mesma cota do rate limiting.
+// A porta da API não é exposta fora da rede do Docker, então só o proxy consegue mandar esses headers.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
 });
 
 // Limite de requisições por IP (contra força bruta e enumeração de telefones)
@@ -86,6 +92,13 @@ builder.Services.AddHostedService<PendingExpirationService>();
 
 var app = builder.Build();
 
+// No servidor (Database__MigrateOnStartup=true) aplica as migrations pendentes ao subir
+if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+{
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.Migrate();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -94,6 +107,8 @@ if (app.Environment.IsDevelopment())
 
 if (!app.Environment.IsDevelopment())
 {
+    // Precisa vir antes de tudo: o rate limiting e o redirecionamento HTTPS dependem do IP e do esquema reais
+    app.UseForwardedHeaders();
     app.UseHsts();
     app.UseHttpsRedirection();
 }
@@ -112,5 +127,8 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
+// Para monitoramento (UptimeRobot etc.)
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.Run();

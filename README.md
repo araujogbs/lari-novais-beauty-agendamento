@@ -64,9 +64,10 @@ A seguir, a documentação técnica completa: regras de negócio, modelo de dado
 5. [Referência da API](#referência-da-api)
 6. [Configuração e segredos](#configuração-e-segredos)
 7. [Como rodar](#como-rodar)
-8. [Testando no celular](#testando-no-celular)
-9. [Segurança](#segurança)
-10. [Limitações conhecidas e próximos passos](#limitações-conhecidas-e-próximos-passos)
+8. [Publicação (deploy)](#publicação-deploy)
+9. [Testando no celular](#testando-no-celular)
+10. [Segurança](#segurança)
+11. [Limitações conhecidas e próximos passos](#limitações-conhecidas-e-próximos-passos)
 
 ---
 
@@ -123,7 +124,9 @@ API e App/
 │   ├── Migrations/                    # Histórico do banco
 │   ├── uploads/                       # Fotos enviadas (criada em runtime, fora do Git)
 │   ├── devlog.md                      # Diário de desenvolvimento
-│   └── Program.cs                     # CORS, JWT, rate limit, EF Core, injeção de dependência
+│   ├── Dockerfile · .dockerignore     # Imagem de produção (usuário sem privilégios, fotos em /data/uploads)
+│   └── Program.cs                     # CORS, JWT, rate limit, proxy reverso, EF Core, /health, injeção de dependência
+├── deploy/                          # Produção num VPS: docker-compose (Postgres + API + Caddy), backup e passo a passo
 └── agendamento-mobile/              # App Expo
     ├── App.tsx                        # Raiz: navegação entre telas, aviso (toast) e visualizador de fotos
     ├── assets/                        # Imagem de fundo, ícones
@@ -244,7 +247,8 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. `people` é opcional (padrão 1, máx. 20) |
+| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. Horários que já passaram não entram. `people` é opcional (padrão 1, máx. 20) |
+| GET | `/appointments/availability?from=AAAA-MM-DD&days=31&serviceId=1&people=1` | Público | Quantos horários de início livres há em cada dia do período (`[{ "date": "2026-10-19", "slots": 12 }, ...]`), usado no calendário do site. `days` de 1 a 62 |
 | POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
 | GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros em análise ou confirmados daquele telefone (com `status`) |
@@ -259,6 +263,8 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 
 Rotas de admin exigem o header `Authorization: Bearer <token>`.
 Excedeu o limite de requisições por IP, a API responde `429`.
+
+Fora de `/api` há também `GET /health` (`{ "status": "ok" }`), para monitoramento (UptimeRobot e afins).
 
 ### Fotos de referência
 - Salvas em `AgendamentoApi/uploads/` com nome aleatório (GUID); o nome original nunca é usado.
@@ -284,6 +290,8 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
 | `TravelFee:OriginLatitude` / `TravelFee:OriginLongitude` | Sim, para cobrar deslocamento | Coordenadas do ponto de partida da maquiadora. **Dado pessoal: só nos segredos**, nunca no repositório. Sem elas, a taxa não é calculada |
 | `TravelFee:FreeRadiusKm` / `TravelFee:PricePerKm` | Não | Já em `appsettings.json`: 5.0 km grátis e R$ 3,00 por km |
+| `Storage:UploadsPath` | Não | Pasta das fotos de referência. Padrão: `AgendamentoApi/uploads`. No Docker: `/data/uploads` (volume) |
+| `Database:MigrateOnStartup` | Não | `true` aplica as migrations pendentes ao subir (usado no `deploy/`) |
 | `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
 
 ```bash
@@ -339,6 +347,21 @@ Comandos úteis no app: `npx tsc --noEmit` (tipos), `npm run lint` (ESLint do Ex
 
 ---
 
+## Publicação (deploy)
+
+A pasta [`deploy/`](deploy/README.md) tem tudo para subir a API num VPS com Docker (passo a passo completo no README dela):
+
+- **`docker-compose.yml`**: PostgreSQL 17 (volume), a API (imagem do `AgendamentoApi/Dockerfile`, fotos num volume) e o **Caddy**, que emite e renova o certificado HTTPS sozinho e repassa o IP real da cliente. A porta da API não fica exposta: só o Caddy fala com ela.
+- **`.env.example`**: senhas, chave JWT, login do painel, domínios, ponto de partida e integrações. Copie para `.env` no servidor (nunca vai para o Git).
+- **`seed-servicos.sql`**: cadastra os 4 serviços do Social no banco novo (pode rodar de novo sem duplicar).
+- **`backup.sh`**: backup diário do banco (`pg_dump`) e das fotos, guardando 14 dias. Copie a pasta `backups/` para fora do servidor.
+
+No servidor as migrations rodam sozinhas ao subir (`Database__MigrateOnStartup=true`). Se usar a Cloudflare no DNS, deixe o registro `api.` como **"DNS only"**: com o proxy laranja ligado, o IP que chega na API seria o da Cloudflare e o limite por IP deixaria de funcionar.
+
+O site é estático e pode ir de graça para o Cloudflare Pages, Vercel ou Netlify (veja o README do Site).
+
+---
+
 ## Testando no celular
 
 1. PC e celular na **mesma rede Wi-Fi**.
@@ -371,17 +394,20 @@ Já implementado:
 - **Limite de requisições por IP** (`429`): login 5/min, consulta e cancelamento de agendamentos 10/min, criação de agendamentos 10 a cada 10 min. Dificulta força bruta de senha e a descoberta de telefones.
 - **CORS restrito:** em produção só as origens de `Cors:AllowedOrigins`; liberado geral apenas em desenvolvimento, e só com os métodos e headers necessários.
 - **HTTPS forçado em produção** (redirecionamento + HSTS) e headers `X-Content-Type-Options: nosniff` e `X-Frame-Options: DENY`.
+- **Atrás do proxy reverso** (fora de desenvolvimento), a API lê `X-Forwarded-For` e `X-Forwarded-Proto`, então o limite por IP vale por cliente, e não para todo mundo junto com o IP do proxy. Isso só é seguro porque a porta da API não é exposta fora da rede do Docker.
 
 ---
 
 ## Limitações conhecidas e próximos passos
 
 - **"Meus Agendamentos" usa só o telefone como prova de identidade.** O limite por IP dificulta, mas não impede, que alguém que saiba o WhatsApp de uma cliente veja e cancele os agendamentos dela. Para endurecer de vez: código de verificação por SMS/WhatsApp.
-- **Em produção**, defina `Cors:AllowedOrigins` (se houver cliente web) e publique atrás de HTTPS (o redirecionamento exige que o servidor ou proxy exponha a porta HTTPS). Atrás de proxy reverso, configure `ForwardedHeaders` para o limite por IP enxergar o IP real da cliente.
+- **Em produção**, defina `Cors:AllowedOrigins` com o domínio do site (o `deploy/` já faz isso a partir de `SITE_DOMAIN`).
+- **WhatsApp:** o `WhatsAppService` envia no formato da Evolution API **v1** (`textMessage: { text }`). A v2, atual, espera `{ number, text }` em `/message/sendText/{instância}`; ajuste ao escolher o provedor. Hoje está em simulação (só log).
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.
-- Fotos ficam em disco local (`uploads/`); em produção, considere armazenamento em nuvem e backup.
+- Fotos ficam em disco (`uploads/`, ou o volume `/data/uploads` no Docker), com backup pelo `deploy/backup.sh`. Com muito volume, vale migrar para armazenamento em nuvem.
+- A criação de agendamento (`POST /appointments`) ainda não recusa um `startTime` no passado; só as listas de horários deixaram de oferecê-los.
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.
 - `GoogleCalendarService` usa `GoogleCredential.FromStream`, marcado como obsoleto pelo Google (aviso `CS0618` no build); migrar para `CredentialFactory` ao ligar a integração de verdade.
 - Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel, notificações push para a maquiadora.

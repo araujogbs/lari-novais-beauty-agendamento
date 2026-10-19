@@ -9,3 +9,5 @@ obj/
 .env
 .env.local
 uploads/
+deploy/secrets/
+deploy/backups/
