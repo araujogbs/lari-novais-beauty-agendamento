@@ -306,7 +306,7 @@ dotnet user-secrets set "TravelFee:OriginLongitude" "<longitude do ponto de part
 
 `dotnet user-secrets list` mostra o que já está definido na máquina. O `dotnet ef` também lê esses segredos.
 
-**Gerando o `Admin:PasswordHash`:** num projeto de console temporário (fora do repositório), com o pacote `Microsoft.AspNetCore.Identity`:
+**Gerando o `Admin:PasswordHash`:** no servidor, `deploy/set-admin-password.sh` pede a senha sem mostrá-la e grava o hash no `.env` (Python, mesmo formato Identity v3). Na máquina de desenvolvimento, num projeto de console temporário (fora do repositório), com o pacote `Microsoft.AspNetCore.Identity`:
 
 ```csharp
 var hasher = new Microsoft.AspNetCore.Identity.PasswordHasher<string>();

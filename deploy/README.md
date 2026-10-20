@@ -10,7 +10,8 @@ PostgreSQL + API + Caddy num VPS com Docker. O Caddy cuida do HTTPS (Let's Encry
 ```bash
 curl -fsSL https://get.docker.com | sh
 git clone <repo> && cd <repo>/deploy
-cp .env.example .env && nano .env      # preencha tudo
+cp .env.example .env && nano .env      # preencha tudo (menos o hash da senha)
+./set-admin-password.sh                # senha do Painel Ateliê: digitada sem aparecer, só o hash vai para o .env
 docker compose up -d --build
 docker compose logs -f api             # as migrations rodam sozinhas ao subir
 ```
