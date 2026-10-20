@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 
@@ -44,7 +45,7 @@ public class TravelFeeService : ITravelFeeService
         if (digits.Length != 8 || !_opt.HasOrigin) return null;
 
         string street = "", neighborhood = "", city = "", state = "";
-        double? lat = null, lon = null;
+        double? lat = null, lon = null; // coordenadas da BrasilAPI: só como último recurso (ver abaixo)
 
         try
         {
@@ -72,11 +73,16 @@ public class TravelFeeService : ITravelFeeService
             return null;
         }
 
-        if (lat is null || lon is null)
+        // A BrasilAPI devolve o centro da cidade para muitos CEPs (em São Paulo, todos dão -23.5475, -46.63611),
+        // o que faria qualquer endereço da cidade ter a mesma distância. Por isso a rua é localizada no
+        // OpenStreetMap primeiro, e as coordenadas da BrasilAPI só valem se ele não encontrar.
+        if (!GeoCache.TryGetValue(digits, out var point))
         {
-            (lat, lon) = await GeocodeAsync(street, city, state, ct);
-            if (lat is null || lon is null) return null;
+            point = await GeocodeAsync(street, city, state, ct);
+            if (point.Lat is not null && GeoCache.Count < MaxCachedCeps) GeoCache[digits] = point;
         }
+        if (point.Lat is not null && point.Lon is not null) (lat, lon) = (point.Lat, point.Lon);
+        if (lat is null || lon is null) return null;
 
         var distanceKm = await RouteDistanceKmAsync(lat.Value, lon.Value, ct)
                          ?? Haversine(_opt.OriginLatitude, _opt.OriginLongitude, lat.Value, lon.Value) * 1.3;
@@ -88,16 +94,23 @@ public class TravelFeeService : ITravelFeeService
         return new TravelFeeResult(digits, street, neighborhood, city, Math.Round(distanceKm, 1), fee);
     }
 
-    private async Task<(double?, double?)> GeocodeAsync(string street, string city, string state, CancellationToken ct)
+    // CEP -> ponto da rua. Evita repetir a consulta ao Nominatim (limite de uso: 1 requisição por segundo).
+    private static readonly ConcurrentDictionary<string, (double? Lat, double? Lon)> GeoCache = new();
+    private const int MaxCachedCeps = 5000;
+
+    private async Task<(double? Lat, double? Lon)> GeocodeAsync(string street, string city, string state, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(street) || string.IsNullOrWhiteSpace(city)) return (null, null);
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(5));
-            var q = Uri.EscapeDataString($"{street}, {city}, {state}, Brazil");
+            // Busca estruturada (rua + cidade + UF): bem mais precisa que o texto livre
+            static string E(string s) => Uri.EscapeDataString(s);
             using var req = new HttpRequestMessage(HttpMethod.Get,
-                $"https://nominatim.openstreetmap.org/search?format=json&limit=1&q={q}");
-            req.Headers.TryAddWithoutValidation("User-Agent", "LariNovaisBeauty/1.0");
+                $"https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br" +
+                $"&street={E(street)}&city={E(city)}&state={E(state)}");
+            req.Headers.TryAddWithoutValidation("User-Agent", "LariNovaisBeauty/1.0 (+https://larinovaisbeauty.com.br)");
             using var resp = await _http.SendAsync(req, cts.Token);
             if (!resp.IsSuccessStatusCode) return (null, null);
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(cts.Token));

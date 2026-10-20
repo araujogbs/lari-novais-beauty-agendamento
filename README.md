@@ -32,7 +32,7 @@ flowchart LR
 
 - **Sem conflito de horários, nem com pedidos simultâneos:** a regra é checada no código e garantida por uma *exclusion constraint* do PostgreSQL (índice GiST com `tstzrange`).
 - **Fluxo de aprovação com estados** (`Pending` → `Confirmed` / `Rejected` / `Expired`) e um `BackgroundService` que expira pedidos parados. Aprovar, recusar e expirar usam `UPDATE` condicional, o que evita condição de corrida entre a maquiadora e a tarefa automática.
-- **Taxa de deslocamento calculada no servidor:** CEP → coordenadas (BrasilAPI, com Nominatim de reserva) → distância de carro (OSRM, com Haversine de reserva). O valor enviado pelo cliente nunca é confiado.
+- **Taxa de deslocamento calculada no servidor:** CEP → rua (BrasilAPI) → coordenadas da rua (Nominatim, com as da BrasilAPI de reserva) → distância de carro (OSRM, com Haversine de reserva). O valor enviado pelo cliente nunca é confiado.
 - **Segurança:** JWT com papel `Admin`, senha guardada em hash, limite de requisições por IP, upload validado pelos bytes do arquivo, fotos servidas só por rota autenticada e segredos (incluindo dados pessoais) fora do Git.
 - **Fuso de Brasília de ponta a ponta:** tudo em UTC no banco, com conversão na entrada e na saída.
 - **App organizado por responsabilidade:** telas, componentes, hooks, serviços de API e utilitários separados, com TypeScript e ESLint.
@@ -178,7 +178,7 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 - **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
   - A distância é medida a partir do ponto de partida da maquiadora (`TravelFee:OriginLatitude`/`OriginLongitude`, nos segredos). Sem esse ponto configurado, a API não calcula taxa e o agendamento segue sem ela.
   - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 5,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
-  - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
+  - Endereço do CEP: **BrasilAPI** (`/api/cep/v2`). Coordenadas: **Nominatim/OpenStreetMap** (busca estruturada por rua, cidade e UF, com cache por CEP). As coordenadas da BrasilAPI ficam só de reserva, porque para muitos CEPs ela devolve o centro da cidade (em São Paulo, o mesmo ponto para todos).
   - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
   - O `POST /appointments` recalcula a taxa a partir do `cep`; o valor enviado pelo app nunca é confiado.
 - Status usados (constantes em `Models/AppointmentStatus.cs`): `Pending` (em análise), `Confirmed`, `Rejected`, `Expired` (3 dias sem resposta), `Cancelled`, `Blocked`.
