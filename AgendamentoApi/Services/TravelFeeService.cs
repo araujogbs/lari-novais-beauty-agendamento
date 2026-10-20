@@ -11,7 +11,7 @@ public class TravelFeeOptions
     public double OriginLongitude { get; set; }
     public bool HasOrigin => OriginLatitude != 0 || OriginLongitude != 0;
     public double FreeRadiusKm { get; set; } = 5.0;
-    public decimal PricePerKm { get; set; } = 3.00m;
+    public decimal PricePerKm { get; set; } = 5.00m;
 }
 
 public record TravelFeeResult(string Cep, string Street, string Neighborhood, string City, double DistanceKm, decimal TravelFee);

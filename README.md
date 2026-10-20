@@ -177,7 +177,7 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 - **Cancelamento pela cliente:** pedido em análise pode ser cancelado a qualquer momento; confirmado, só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
 - **Taxa de deslocamento** (configurada em `TravelFee`, calculada no servidor a partir do CEP):
   - A distância é medida a partir do ponto de partida da maquiadora (`TravelFee:OriginLatitude`/`OriginLongitude`, nos segredos). Sem esse ponto configurado, a API não calcula taxa e o agendamento segue sem ela.
-  - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 3,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
+  - Os primeiros `FreeRadiusKm` (5 km) são isentos; acima disso, `(distância − 5) × R$ 5,00 por km × 2` (**ida e volta**), arredondado a 2 casas.
   - Coordenadas do CEP: **BrasilAPI** (`/api/cep/v2`), com fallback para **Nominatim/OpenStreetMap** quando vierem vazias.
   - Distância de carro: **OSRM**; se falhar ou passar de 3 s, usa Haversine × 1,3.
   - O `POST /appointments` recalcula a taxa a partir do `cep`; o valor enviado pelo app nunca é confiado.
@@ -289,7 +289,7 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `WhatsApp:OwnerPhone` | Não | WhatsApp da maquiadora (ex.: `5511914834786`) para receber aviso de cada pedido novo |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
 | `TravelFee:OriginLatitude` / `TravelFee:OriginLongitude` | Sim, para cobrar deslocamento | Coordenadas do ponto de partida da maquiadora. **Dado pessoal: só nos segredos**, nunca no repositório. Sem elas, a taxa não é calculada |
-| `TravelFee:FreeRadiusKm` / `TravelFee:PricePerKm` | Não | Já em `appsettings.json`: 5.0 km grátis e R$ 3,00 por km |
+| `TravelFee:FreeRadiusKm` / `TravelFee:PricePerKm` | Não | Já em `appsettings.json`: 5.0 km grátis e R$ 5,00 por km |
 | `Storage:UploadsPath` | Não | Pasta das fotos de referência. Padrão: `AgendamentoApi/uploads`. No Docker: `/data/uploads` (volume) |
 | `Database:MigrateOnStartup` | Não | `true` aplica as migrations pendentes ao subir (usado no `deploy/`) |
 | `Cors:AllowedOrigins` | Produção | Lista de origens de navegador permitidas (`Cors__AllowedOrigins__0`, `__1`...). Vazia fora de desenvolvimento = nenhuma origem liberada. O app mobile nativo não depende de CORS |
