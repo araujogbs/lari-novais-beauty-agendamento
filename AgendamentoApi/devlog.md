@@ -172,3 +172,22 @@ Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e p
 - [ ] Contratar domínio e VPS e seguir o `deploy/README.md`.
 - [ ] Recusar `startTime` no passado também no `POST /appointments`.
 - [ ] Ajustar o `WhatsAppService` ao formato da Evolution API v2 ao ligar o WhatsApp.
+
+## [2026-10-20] - API em produção
+
+### 🛠️ O que foi feito
+- **VPS no ar** (Ubuntu 24.04): usuário `deploy` só com chave SSH, root e senha desligados, firewall (22, 80, 443), fail2ban, atualizações de segurança automáticas, swap e logs do Docker rotacionados. Passo a passo em `deploy/README.md`.
+- **API, PostgreSQL e Caddy** rodando em `https://api.larinovaisbeauty.com.br`, com certificado Let's Encrypt, os 4 serviços cadastrados e backup diário às 03:00.
+- **`deploy/set-admin-password.sh`:** a senha do Painel é digitada no servidor sem aparecer e só o hash (Identity v3, PBKDF2-SHA512) vai para o `.env`. O formato foi conferido contra o `PasswordHasher` do ASP.NET.
+- **Taxa de deslocamento corrigida:** a BrasilAPI devolve o centro de São Paulo para todos os CEPs da cidade, e todo endereço saía com 6,5 km. Agora a rua é localizada no Nominatim (busca estruturada, com cache por CEP).
+- **R$ 5,00 por km** e logs sem cada consulta SQL em produção.
+- **Teste de ponta a ponta** no site publicado: serviços, calendário, horários, taxa e confirmação, com o agendamento de teste apagado depois.
+
+### 💡 Aprendizados Técnicos
+- O Caddy tenta emitir o certificado assim que sobe. Antes do DNS apontar, isso gasta tentativas do Let's Encrypt; por isso, sem DNS, suba só `db` e `api`.
+- Na imagem Ubuntu da Hostinger, o `50-cloud-init.conf` liga o login por senha. Como no sshd vale o primeiro valor lido, a configuração de segurança precisa do prefixo `00-`.
+
+### 📌 Próximos Passos
+- [ ] WhatsApp pela API oficial da Meta (de preferência em coexistência com o número atual).
+- [ ] Google Calendar com conta de serviço, apagando o evento quando o agendamento é cancelado.
+- [ ] Cópia do backup fora do servidor e monitoramento (UptimeRobot).

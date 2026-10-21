@@ -4,6 +4,8 @@ Sistema de agendamento feito para uma maquiadora profissional de São Paulo que 
 
 Este repositório reúne a **API** (.NET) e o **app** (React Native). O site institucional, que usa a mesma API, está em [lari-novais-beauty-site](https://github.com/araujogbs/lari-novais-beauty-site).
 
+**Em produção:** API em `https://api.larinovaisbeauty.com.br` (VPS com Docker, PostgreSQL e Caddy) e site em [larinovaisbeauty.com.br](https://larinovaisbeauty.com.br). Veja [Publicação (deploy)](#publicação-deploy).
+
 <p align="center">
   <img src="docs/app-inicio.jpg" width="200" alt="Tela inicial do app" />
   <img src="docs/app-servicos.jpg" width="200" alt="Escolha do serviço" />
@@ -356,9 +358,22 @@ A pasta [`deploy/`](deploy/README.md) tem tudo para subir a API num VPS com Dock
 - **`seed-servicos.sql`**: cadastra os 4 serviços do Social no banco novo (pode rodar de novo sem duplicar).
 - **`backup.sh`**: backup diário do banco (`pg_dump`) e das fotos, guardando 14 dias. Copie a pasta `backups/` para fora do servidor.
 
+- **`set-admin-password.sh`**: define a senha do Painel Ateliê digitada sem aparecer na tela; só o hash (formato ASP.NET Identity v3) vai para o `.env`.
+
 No servidor as migrations rodam sozinhas ao subir (`Database__MigrateOnStartup=true`). Se usar a Cloudflare no DNS, deixe o registro `api.` como **"DNS only"**: com o proxy laranja ligado, o IP que chega na API seria o da Cloudflare e o limite por IP deixaria de funcionar.
 
-O site é estático e pode ir de graça para o Cloudflare Pages, Vercel ou Netlify (veja o README do Site).
+### Produção atual
+
+| Parte | Onde |
+|---|---|
+| API, banco e HTTPS | VPS Ubuntu 24.04 (4 GB), Docker Compose em `/opt/lari/api/deploy`, certificado Let's Encrypt pelo Caddy |
+| Domínio | `larinovaisbeauty.com.br` no registro.br, DNS na Cloudflare com DNSSEC; `api` como "DNS only" |
+| Site | Cloudflare Workers (arquivos estáticos), ligado ao GitHub: cada push na `master` publica |
+| Acesso ao servidor | só por chave SSH, com o usuário `deploy` (root e senha desligados) |
+| Proteção | firewall (22, 80 e 443), fail2ban e atualizações de segurança automáticas |
+| Backup | diário às 03:00 (banco e fotos, 14 dias), em `deploy/backups/` no próprio servidor |
+
+Atualizar a API em produção: `cd /opt/lari/api && git pull && cd deploy && docker compose up -d --build`. A preparação do servidor está documentada em [`deploy/README.md`](deploy/README.md).
 
 ---
 
@@ -401,8 +416,9 @@ Já implementado:
 ## Limitações conhecidas e próximos passos
 
 - **"Meus Agendamentos" usa só o telefone como prova de identidade.** O limite por IP dificulta, mas não impede, que alguém que saiba o WhatsApp de uma cliente veja e cancele os agendamentos dela. Para endurecer de vez: código de verificação por SMS/WhatsApp.
-- **Em produção**, defina `Cors:AllowedOrigins` com o domínio do site (o `deploy/` já faz isso a partir de `SITE_DOMAIN`).
-- **WhatsApp:** o `WhatsAppService` envia no formato da Evolution API **v1** (`textMessage: { text }`). A v2, atual, espera `{ number, text }` em `/message/sendText/{instância}`; ajuste ao escolher o provedor. Hoje está em simulação (só log).
+- **WhatsApp e Google Calendar ainda em simulação em produção** (as mensagens e os eventos só aparecem no log). O `WhatsAppService` envia no formato da Evolution API **v1** (`textMessage: { text }`). O plano é usar a **API oficial da Meta** (Cloud API, com modelos de mensagem aprovados), de preferência em coexistência com o WhatsApp Business do número atual.
+- **Backup só no próprio servidor.** Falta copiar `deploy/backups/` para fora (ex.: `rclone` para Backblaze B2 ou Google Drive).
+- **A janela de 3 meses do calendário existe só no site.** A API ainda aceita pedidos para qualquer data futura enviados direto.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
 - Cancelar um atendimento **não remove** o evento do Google Calendar.
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.
