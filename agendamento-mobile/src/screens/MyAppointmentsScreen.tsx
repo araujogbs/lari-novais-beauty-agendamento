@@ -1,25 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { cancelAsClient, getMyAppointments } from '../services/appointments';
+import { cancelAsClient, lookupMyAppointments } from '../services/appointments';
+import { getBookingTokens } from '../services/myBookings';
 import { common } from '../styles/common';
 import { THEME } from '../theme';
 import type { MyAppointment, Notify } from '../types';
 import { formatShortDateBR, formatTimeBR } from '../utils/date';
 import { getErrorMessage } from '../utils/errors';
-import { formatBRL, formatPhone } from '../utils/format';
+import { formatBRL } from '../utils/format';
 
 interface Props {
   notify: Notify;
-  /** Telefone para já buscar ao abrir (vem do agendamento recém-concluído). */
-  initialPhone?: string;
 }
 
-export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
-  const [phone, setPhone] = useState(initialPhone);
+/** Só aparecem os agendamentos cujo código secreto está neste aparelho (feitos aqui). */
+export function MyAppointmentsScreen({ notify }: Props) {
   const [appointments, setAppointments] = useState<MyAppointment[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [hasTokens, setHasTokens] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
@@ -33,16 +32,13 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
     }
   };
 
-  const search = async (phoneToSearch: string = phone) => {
-    if (phoneToSearch.replace(/\D/g, '').length < 10) {
-      notify('Atenção', 'Informe um WhatsApp válido.');
-      return;
-    }
+  const search = async () => {
     try {
       setLoading(true);
       setConfirmCancelId(null);
-      setAppointments(await getMyAppointments(phoneToSearch));
-      setSearched(true);
+      const tokens = await getBookingTokens();
+      setHasTokens(tokens.length > 0);
+      setAppointments(tokens.length ? await lookupMyAppointments(tokens) : []);
     } catch (error: any) {
       notify('Erro', getErrorMessage(error, 'Não foi possível buscar seus agendamentos.'));
     } finally {
@@ -50,16 +46,16 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
     }
   };
 
-  // Busca uma única vez ao abrir, quando a tela já vem com o telefone do agendamento recém-feito
+  // Busca ao abrir a tela
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (initialPhone) search(initialPhone);
+    search();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleCancel = async (id: number) => {
+  const handleCancel = async (appt: MyAppointment) => {
     try {
-      await cancelAsClient(id, phone);
+      await cancelAsClient(appt.id, appt.manageToken);
       notify('Sucesso', 'Agendamento cancelado com sucesso.', 'success');
       setConfirmCancelId(null);
       search();
@@ -73,29 +69,18 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
     <ScrollView contentContainerStyle={common.scrollContent} showsVerticalScrollIndicator={false}>
       <View style={common.header}>
         <Text style={common.title}>Meus Agendamentos</Text>
-        <Text style={common.subtitle}>Consulte ou cancele usando seu WhatsApp</Text>
+        <Text style={common.subtitle}>Os agendamentos feitos neste aparelho</Text>
       </View>
 
-      <View style={common.formCard}>
-        <Text style={common.inputLabel}>WhatsApp</Text>
-        <TextInput
-          style={common.textInput}
-          value={phone}
-          onChangeText={(t) => setPhone(formatPhone(t))}
-          placeholder="(11) 99999-9999"
-          placeholderTextColor={THEME.textMuted}
-          keyboardType="numeric"
-          maxLength={15}
-        />
-      </View>
+      {loading && <ActivityIndicator color={THEME.roseDark} style={{ marginTop: 24 }} />}
 
-      <TouchableOpacity style={[common.btnPrimary, { flex: 0, marginTop: 16 }]} onPress={() => search()} disabled={loading}>
-        {loading ? <ActivityIndicator color={THEME.white} /> : <Text style={common.btnPrimaryText}>Buscar</Text>}
-      </TouchableOpacity>
-
-      {searched && appointments.length === 0 && (
+      {!loading && appointments.length === 0 && (
         <View style={common.emptyContainer}>
-          <Text style={common.emptyText}>Nenhum agendamento futuro para este número.</Text>
+          <Text style={common.emptyText}>
+            {hasTokens
+              ? 'Nenhum agendamento futuro.'
+              : 'Nenhum agendamento neste aparelho. Por segurança, só aparecem os agendamentos feitos aqui. Precisa de ajuda? Fale com a Lari pelo WhatsApp.'}
+          </Text>
         </View>
       )}
 
@@ -142,7 +127,7 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
 
             {confirmCancelId === appt.id ? (
               <View style={{ gap: 6 }}>
-                <TouchableOpacity style={common.cancelAction} onPress={() => handleCancel(appt.id)}>
+                <TouchableOpacity style={common.cancelAction} onPress={() => handleCancel(appt)}>
                   <Text style={common.cancelActionText}>Confirmar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity

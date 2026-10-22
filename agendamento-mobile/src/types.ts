@@ -37,6 +37,8 @@ export interface AppointmentItem {
 
 export interface MyAppointment {
   id: number;
+  /** Código secreto do agendamento, usado para cancelar. */
+  manageToken: string;
   serviceName: string;
   price: number; // valor total do serviço (unitário x pessoas), sem deslocamento
   people?: number;

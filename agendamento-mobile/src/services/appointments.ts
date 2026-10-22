@@ -49,16 +49,18 @@ export const createAppointment = (payload: BookingPayload) => {
     }
   });
 
-  return api.post('/appointments', form, {
+  // Devolve o id e o código secreto, com que a cliente acompanha e cancela o pedido
+  return api.post<{ id: number; manageToken: string }>('/appointments', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     transformRequest: (data) => data, // evita o axios serializar o FormData
   });
 };
 
-export const getMyAppointments = async (phone: string) =>
-  (await api.get<MyAppointment[]>('/appointments/my-appointments', { params: { phone } })).data;
+/** Agendamentos futuros dos códigos secretos guardados neste aparelho. */
+export const lookupMyAppointments = async (tokens: string[]) =>
+  (await api.post<MyAppointment[]>('/appointments/lookup', { tokens })).data;
 
-export const cancelAsClient = (id: number, phone: string) => api.post(`/appointments/${id}/client-cancel`, { phone });
+export const cancelAsClient = (id: number, token: string) => api.post(`/appointments/${id}/client-cancel`, { token });
 
 /* ---------- maquiadora (rotas protegidas) ---------- */
 

@@ -24,7 +24,6 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState<ViewMode>('welcome');
   const [booked, setBooked] = useState<BookedSummary | null>(null);
-  const [myAppointmentsPhone, setMyAppointmentsPhone] = useState('');
   const [lightbox, setLightbox] = useState<LightboxSource | null>(null);
   const { toast, notify, dismiss } = useToast();
 
@@ -43,10 +42,7 @@ export default function App() {
     setViewMode('success');
   };
 
-  const openMyAppointments = (phone = '') => {
-    setMyAppointmentsPhone(phone);
-    setViewMode('myAppointments');
-  };
+  const openMyAppointments = () => setViewMode('myAppointments');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -70,10 +66,10 @@ export default function App() {
           {viewMode === 'client' && <BookingScreen notify={notify} openLightbox={setLightbox} onBooked={handleBooked} />}
 
           {viewMode === 'success' && booked && (
-            <SuccessScreen booked={booked} onContinue={() => openMyAppointments(booked.phone)} />
+            <SuccessScreen booked={booked} onContinue={() => openMyAppointments()} />
           )}
 
-          {viewMode === 'myAppointments' && <MyAppointmentsScreen notify={notify} initialPhone={myAppointmentsPhone} />}
+          {viewMode === 'myAppointments' && <MyAppointmentsScreen notify={notify} />}
 
           {viewMode === 'adminLogin' && <AdminLoginScreen notify={notify} onLoggedIn={() => setViewMode('admin')} />}
 

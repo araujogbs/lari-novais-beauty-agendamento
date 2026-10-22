@@ -6,6 +6,7 @@ import { SkeletonList } from '../../components/Skeleton';
 import { START_TIME_INFO } from '../../constants';
 import type { BookingForm } from '../../hooks/useBookingForm';
 import { createAppointment, getAvailableSlots } from '../../services/appointments';
+import { addBookingToken } from '../../services/myBookings';
 import { common } from '../../styles/common';
 import { THEME } from '../../theme';
 import type { BookedSummary, Notify, OpenLightbox, ServiceItem } from '../../types';
@@ -74,7 +75,7 @@ export function DetailsStep({ services, form, notify, openLightbox, onBack, onBo
       setSubmitting(true);
       // O slot (horário de início) está em horário de Brasília;
       // a API recebe UTC e calcula o término somando a duração total (serviço x pessoas)
-      await createAppointment({
+      const created = await createAppointment({
         clientName: form.clientName,
         clientPhone: form.clientPhone,
         clientAddress: [form.clientAddress.trim(), form.addressNumber.trim()].filter(Boolean).join(', '),
@@ -85,6 +86,8 @@ export function DetailsStep({ services, form, notify, openLightbox, onBack, onBo
         people,
         images: form.images,
       });
+
+      if (created.data?.manageToken) await addBookingToken(created.data.manageToken);
 
       const summary: BookedSummary = {
         phone: form.clientPhone,
