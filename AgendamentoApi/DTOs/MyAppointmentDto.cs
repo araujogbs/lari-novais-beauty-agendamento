@@ -16,6 +16,11 @@ public class MyAppointmentDto
     public decimal? TravelFee { get; set; }
     public double? DistanceKm { get; set; }
     public string Status { get; set; } = string.Empty;
+    // Sinal para garantir o horário (só depois que a maquiadora confirma o pedido)
+    public decimal? DepositAmount { get; set; }
+    public bool DepositPaid { get; set; }
+    // "PIX copia e cola" do sinal; null se já foi pago ou se a chave PIX não está configurada
+    public string? PixCode { get; set; }
 }
 
 public class ClientCancelDto

@@ -45,6 +45,12 @@ namespace AgendamentoApi.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal?>("DepositAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTime?>("DepositPaidAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
@@ -66,12 +72,22 @@ namespace AgendamentoApi.Migrations
                     b.Property<int>("ServiceItemId")
                         .HasColumnType("integer");
 
+                    b.PrimitiveCollection<List<int>>("ServiceItemIds")
+                        .IsRequired()
+                        .HasColumnType("integer[]");
+
+                    b.Property<string>("ServiceNames")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("StartTime")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal?>("TotalPrice")
+                        .HasColumnType("numeric");
 
                     b.Property<decimal?>("TravelFee")
                         .HasColumnType("numeric");

@@ -45,12 +45,14 @@ public class AppointmentsController : ControllerBase
     private readonly IWhatsAppService _whatsAppService;
     private readonly IGoogleCalendarService _calendarService; // Novo campo
     private readonly ITravelFeeService _travelFeeService;
+    private readonly IDepositService _depositService;
 
     public AppointmentsController(
         AppDbContext context,
         IWhatsAppService whatsAppService,
         IGoogleCalendarService calendarService, // Injetado aqui
         ITravelFeeService travelFeeService,
+        IDepositService depositService,
         IWebHostEnvironment env,
         IConfiguration configuration)
     {
@@ -61,7 +63,35 @@ public class AppointmentsController : ControllerBase
         _whatsAppService = whatsAppService;
         _calendarService = calendarService;
         _travelFeeService = travelFeeService;
+        _depositService = depositService;
     }
+
+    private const int MaxServices = 5;
+
+    // Serviços ativos escolhidos, na ordem pedida e sem repetir. Null se faltar algum, estiver inativo ou houver demais.
+    private async Task<List<ServiceItem>?> ResolveServicesAsync(IEnumerable<int>? ids)
+    {
+        var wanted = (ids ?? []).Where(i => i > 0).Distinct().ToList();
+        if (wanted.Count == 0 || wanted.Count > MaxServices) return null;
+        var found = await _context.Services.Where(s => wanted.Contains(s.Id) && s.IsActive).ToListAsync();
+        if (found.Count != wanted.Count) return null;
+        return wanted.Select(id => found.First(s => s.Id == id)).ToList();
+    }
+
+    // "1,3" (ou só o serviceId antigo) -> [1, 3]
+    private static List<int> ParseServiceIds(string? csv, int single)
+    {
+        var ids = (csv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => int.TryParse(x, out var n) ? n : 0)
+            .ToList();
+        if (ids.Count == 0) ids.Add(single);
+        return ids;
+    }
+
+    // Pedidos antigos não têm o nome/valor gravados: cai no serviço único
+    private static string ServiceLabel(Appointment a) => a.ServiceNames ?? a.ServiceItem?.Name ?? "Serviço";
+    private static decimal ServicesTotal(Appointment a) => a.TotalPrice ?? (a.ServiceItem?.Price ?? 0) * a.People;
 
     // GET: api/appointments/estimate-fee?cep=01310100 (público)
     [HttpGet("estimate-fee")]
@@ -133,17 +163,18 @@ public class AppointmentsController : ControllerBase
             imageExts.Add(ext);
         }
 
-        // 1. Procurar o serviço para validar a duração
-        var service = await _context.Services.FindAsync(dto.ServiceItemId);
-        if (service == null || !service.IsActive)
+        // 1. Procurar os serviços para validar e somar a duração e o valor
+        var services = await ResolveServicesAsync(dto.ServiceItemIds is { Count: > 0 } ? dto.ServiceItemIds : [dto.ServiceItemId]);
+        if (services == null)
         {
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
+        var serviceNames = string.Join(" + ", services.Select(s => s.Name));
 
         // 2. A cliente informa o horário de início; o término é calculado somando a duração total (serviço x pessoas).
         var people = Math.Clamp(dto.People, 1, MaxPeople);
         var startTimeUtc = dto.StartTime.UtcDateTime;
-        var endTimeUtc = startTimeUtc.AddMinutes(service.DurationMinutes * people);
+        var endTimeUtc = startTimeUtc.AddMinutes(services.Sum(s => s.DurationMinutes) * people);
 
         if (!IsWithinWorkHours(startTimeUtc, endTimeUtc))
         {
@@ -189,7 +220,10 @@ public class AppointmentsController : ControllerBase
             ReferenceImages = savedImages,
             TravelFee = fee?.TravelFee,
             DistanceKm = fee?.DistanceKm,
-            ServiceItemId = dto.ServiceItemId,
+            ServiceItemId = services[0].Id,
+            ServiceItemIds = services.Select(s => s.Id).ToList(),
+            ServiceNames = serviceNames,
+            TotalPrice = services.Sum(s => s.Price) * people,
             People = people,
             StartTime = startTimeUtc,
             EndTime = endTimeUtc,
@@ -208,13 +242,10 @@ public class AppointmentsController : ControllerBase
             return Conflict(new { message = "O horário selecionado já se encontra ocupado. Escolha outro intervalo." });
         }
 
-        // Pedido recebido: avisa a cliente (em análise) e a maquiadora (novo pedido).
+        // Pedido recebido: avisa a cliente (em análise); a maquiadora vê o pedido no Painel Ateliê.
         // A confirmação e o evento no Google Calendar só acontecem quando a maquiadora aprova.
         await _whatsAppService.SendRequestReceivedAsync(
-            appointment.ClientPhone, appointment.ClientName, service.Name,
-            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
-        await _whatsAppService.NotifyOwnerNewRequestAsync(
-            appointment.ClientName, appointment.ClientPhone, service.Name,
+            appointment.ClientPhone, appointment.ClientName, serviceNames,
             ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
 
         return CreatedAtAction(nameof(GetAppointments), new { id = appointment.Id }, appointment);
@@ -247,10 +278,17 @@ public class AppointmentsController : ControllerBase
         if (!await TryLeavePendingAsync(appointment, AppointmentStatus.Confirmed))
             return Conflict(new { message = "Este agendamento não está mais em análise." });
 
-        var serviceName = appointment.ServiceItem?.Name ?? "Serviço";
+        // O sinal é calculado ao aprovar (serviços + deslocamento) e vai junto da confirmação, com o PIX
+        var deposit = _depositService.Calculate(ServicesTotal(appointment) + (appointment.TravelFee ?? 0));
+        appointment.DepositAmount = deposit;
+        await _context.Appointments.Where(a => a.Id == appointment.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.DepositAmount, deposit));
+
+        var serviceName = ServiceLabel(appointment);
         await _whatsAppService.SendConfirmationMessageAsync(
             appointment.ClientPhone, appointment.ClientName, serviceName,
-            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
+            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
+            deposit, _depositService.BuildPixCode(appointment.Id, deposit));
         await _calendarService.CreateEventAsync(
             $"{serviceName} - {appointment.ClientName}",
             BuildCalendarDescription(appointment),
@@ -274,7 +312,7 @@ public class AppointmentsController : ControllerBase
             return Conflict(new { message = "Este agendamento não está mais em análise." });
 
         await _whatsAppService.SendRejectionMessageAsync(
-            appointment.ClientPhone, appointment.ClientName, appointment.ServiceItem?.Name ?? "Serviço",
+            appointment.ClientPhone, appointment.ClientName, ServiceLabel(appointment),
             ToBrazil(appointment.StartTime), dto?.Reason);
 
         return Ok(appointment);
@@ -295,9 +333,9 @@ public class AppointmentsController : ControllerBase
 
     private static string BuildCalendarDescription(Appointment a)
     {
-        var price = (a.ServiceItem?.Price ?? 0) * a.People;
+        var price = ServicesTotal(a);
         return $"Cliente: {a.ClientName}\nWhatsApp: {a.ClientPhone}\nEndereço: {a.ClientAddress}\nDescrição: {a.Description}\n" +
-               $"Fotos de referência: {a.ReferenceImages.Count}\nPessoas: {a.People}\n" +
+               $"Serviços: {ServiceLabel(a)}\nFotos de referência: {a.ReferenceImages.Count}\nPessoas: {a.People}\n" +
                $"Início: {ToBrazil(a.StartTime):HH:mm} • Término previsto: {ToBrazil(a.EndTime):HH:mm}\nValor: R$ {price:F2}" +
                (a.TravelFee is decimal tf ? $"\nDeslocamento: {a.DistanceKm:F1} km • R$ {tf:F2}" : "");
     }
@@ -336,15 +374,20 @@ public class AppointmentsController : ControllerBase
             .Select(a => new MyAppointmentDto
             {
                 Id = a.Id,
-                ServiceName = a.ServiceItem?.Name ?? "Serviço",
-                Price = (a.ServiceItem?.Price ?? 0) * a.People,
+                ServiceName = ServiceLabel(a),
+                Price = ServicesTotal(a),
                 People = a.People,
                 StartTime = a.StartTime,
                 EndTime = a.EndTime,
                 ClientAddress = a.ClientAddress,
                 TravelFee = a.TravelFee,
                 DistanceKm = a.DistanceKm,
-                Status = a.Status
+                Status = a.Status,
+                DepositAmount = a.DepositAmount,
+                DepositPaid = a.DepositPaidAt != null,
+                PixCode = a.Status == AppointmentStatus.Confirmed && a.DepositAmount is > 0 && a.DepositPaidAt == null
+                    ? _depositService.BuildPixCode(a.Id, a.DepositAmount.Value)
+                    : null
             })
             .ToList();
 
@@ -414,10 +457,10 @@ public class AppointmentsController : ControllerBase
         }
     }
 
-    // GET: api/appointments/available-slots?date=2026-09-27&serviceId=1&people=2
+    // GET: api/appointments/available-slots?date=2026-09-27&serviceId=1&people=2 (ou serviceIds=1,3 para vários serviços)
     // Devolve os horários de INÍCIO em que o atendimento inteiro (serviço x pessoas) cabe livre no expediente.
     [HttpGet("available-slots")]
-    public async Task<ActionResult<IEnumerable<string>>> GetAvailableSlots([FromQuery] string date, [FromQuery] int serviceId, [FromQuery] int people = 1)
+    public async Task<ActionResult<IEnumerable<string>>> GetAvailableSlots([FromQuery] string date, [FromQuery] int serviceId, [FromQuery] string? serviceIds, [FromQuery] int people = 1)
     {
         // 1. Validar e converter a string "YYYY-MM-DD"
         if (!DateTime.TryParse(date, out var parsedDate))
@@ -425,9 +468,9 @@ public class AppointmentsController : ControllerBase
             return BadRequest(new { message = "Formato de data inválido. Use AAAA-MM-DD." });
         }
 
-        // 2. Buscar o serviço
-        var service = await _context.Services.FindAsync(serviceId);
-        if (service == null || !service.IsActive)
+        // 2. Buscar os serviços (um ou vários)
+        var services = await ResolveServicesAsync(ParseServiceIds(serviceIds, serviceId));
+        if (services == null)
         {
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
@@ -436,7 +479,7 @@ public class AppointmentsController : ControllerBase
         {
             return BadRequest(new { message = $"A quantidade de pessoas deve ser de 1 a {MaxPeople}." });
         }
-        var totalMinutes = service.DurationMinutes * people;
+        var totalMinutes = services.Sum(s => s.DurationMinutes) * people;
 
         // 3. Agendamentos e bloqueios (não cancelados) que tocam o expediente (06:00-22:00 em Brasília)
         var existingAppointments = await BusyIntervalsAsync(LocalToUtc(parsedDate, WorkStart), LocalToUtc(parsedDate, WorkEnd));
@@ -449,7 +492,7 @@ public class AppointmentsController : ControllerBase
     // GET: api/appointments/availability?from=2026-10-19&days=31&serviceId=1&people=1
     // Quantos horários de início livres há em cada dia do período (o calendário do site marca os dias livres e lotados).
     [HttpGet("availability")]
-    public async Task<IActionResult> GetAvailability([FromQuery] string from, [FromQuery] int days, [FromQuery] int serviceId, [FromQuery] int people = 1)
+    public async Task<IActionResult> GetAvailability([FromQuery] string from, [FromQuery] int days, [FromQuery] int serviceId, [FromQuery] string? serviceIds, [FromQuery] int people = 1)
     {
         if (!DateTime.TryParse(from, out var fromDate))
         {
@@ -461,8 +504,8 @@ public class AppointmentsController : ControllerBase
             return BadRequest(new { message = $"O período deve ter de 1 a {MaxAvailabilityDays} dias." });
         }
 
-        var service = await _context.Services.FindAsync(serviceId);
-        if (service == null || !service.IsActive)
+        var services = await ResolveServicesAsync(ParseServiceIds(serviceIds, serviceId));
+        if (services == null)
         {
             return BadRequest(new { message = "Serviço inválido ou inativo." });
         }
@@ -471,7 +514,7 @@ public class AppointmentsController : ControllerBase
         {
             return BadRequest(new { message = $"A quantidade de pessoas deve ser de 1 a {MaxPeople}." });
         }
-        var totalMinutes = service.DurationMinutes * people;
+        var totalMinutes = services.Sum(s => s.DurationMinutes) * people;
 
         // Uma consulta só para o período inteiro
         var existingAppointments = await BusyIntervalsAsync(
@@ -520,6 +563,22 @@ public class AppointmentsController : ControllerBase
         }
 
         return slots;
+    }
+
+    // POST: api/appointments/5/deposit-paid (a maquiadora marca que recebeu o sinal; repetir não faz mal)
+    [HttpPost("{id}/deposit-paid")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Appointment>> MarkDepositPaid(int id)
+    {
+        var appointment = await _context.Appointments.Include(a => a.ServiceItem).FirstOrDefaultAsync(a => a.Id == id);
+        if (appointment == null)
+            return NotFound(new { message = "Agendamento não encontrado." });
+        if (appointment.Status != AppointmentStatus.Confirmed || appointment.DepositAmount is not > 0)
+            return Conflict(new { message = "Só pedidos confirmados têm sinal a receber." });
+
+        appointment.DepositPaidAt ??= DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return Ok(appointment);
     }
 
     // PATCH: api/appointments/5/status (desmarcar atendimento ou desbloquear agenda; body: "Cancelled")

@@ -96,7 +96,7 @@ Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, segu
 - Sessão por JWT; ao expirar, o app volta para o login.
 
 ### Automações
-- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar; aviso quando o pedido expira sem resposta. Opcionalmente, aviso de pedido novo para a maquiadora (`WhatsApp:OwnerPhone`).
+- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar; aviso quando o pedido expira sem resposta. A maquiadora vê os pedidos novos no Painel Ateliê.
 - Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
@@ -223,10 +223,11 @@ A migration `AtualizarServicosSocial` atualiza preços e durações dos serviço
 
 | Serviço | Duração | Preço |
 |---|---|---|
-| Maquiagem | 60 min | R$ 350 |
-| Penteado | 90 min | R$ 350 |
-| Maquiagem + Penteado | 150 min | R$ 700 |
+| Maquiagem | 60 min | R$ 380 |
+| Penteado | 90 min | R$ 380 |
 | Escova e Babyliss | 60 min | R$ 300 |
+
+A migration `SinalEVariosServicos` leva os preços de maquiagem e penteado a R$ 380 e desativa o antigo combo "Maquiagem + Penteado": no Social a cliente marca **mais de um serviço** e o valor e a duração somam. O pedido grava `ServiceItemIds`, `ServiceNames` e `TotalPrice` (mudar o preço depois não altera pedidos antigos) e, ao ser aprovado, `DepositAmount` (o sinal). `DepositPaidAt` é preenchido quando a maquiadora marca que recebeu.
 
 ---
 
@@ -249,15 +250,16 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. Horários que já passaram não entram. `people` é opcional (padrão 1, máx. 20) |
-| GET | `/appointments/availability?from=AAAA-MM-DD&days=31&serviceId=1&people=1` | Público | Quantos horários de início livres há em cada dia do período (`[{ "date": "2026-10-19", "slots": 12 }, ...]`), usado no calendário do site. `days` de 1 a 62 |
-| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemId`, `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` (ou `serviceIds=1,3`) | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. Horários que já passaram não entram. `people` é opcional (padrão 1, máx. 20) |
+| GET | `/appointments/availability?from=AAAA-MM-DD&days=31&serviceId=1&people=1` (ou `serviceIds=1,3`) | Público | Quantos horários de início livres há em cada dia do período (`[{ "date": "2026-10-19", "slots": 12 }, ...]`), usado no calendário do site. `days` de 1 a 62 |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento. **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemIds` (um ou mais, repetido no form), `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
-| GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros em análise ou confirmados daquele telefone (com `status`) |
+| GET | `/appointments/my-appointments?phone=` | Público (10/min por IP) | Agendamentos futuros em análise ou confirmados daquele telefone (com `status`). Nos confirmados com sinal a pagar vêm `depositAmount` e `pixCode` (PIX copia e cola) |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "phone": "..." }`. Cancela se o telefone bater: pedido em análise a qualquer momento, confirmado só com mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
 | GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data (cada um com `expiresAt`, o prazo para responder) |
 | POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, envia a confirmação por WhatsApp e cria o evento no Google Calendar. `409` se não estiver mais em análise |
+| POST | `/appointments/{id}/deposit-paid` | Admin | Marca que o sinal do pedido confirmado foi recebido (`depositPaidAt`). `409` se não estiver confirmado |
 | POST | `/appointments/{id}/reject` | Admin | Recusa um pedido em análise (body opcional `{ "reason": "..." }`): vira `Rejected`, libera o horário e avisa a cliente. `409` se não estiver mais em análise |
 | PATCH | `/appointments/{id}/status` | Admin | Desmarca um atendimento ou desfaz um bloqueio. Só aceita `"Cancelled"` (string JSON) |
 | POST | `/appointments/block-slot` | Admin | Bloqueia agenda: `{ date, startTime?, endTime?, reason? }` (sem horários = expediente todo) |
@@ -287,8 +289,9 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `Jwt:Issuer` / `Jwt:Audience` | Sim | Já definidos em `appsettings.json` (`AgendamentoApi`) |
 | `Admin:Username` | Sim | Usuário do painel |
 | `Admin:PasswordHash` | Sim | Hash da senha no formato do ASP.NET Identity (`PasswordHasher`). Nunca a senha em texto |
-| `WhatsApp:ApiUrl` / `WhatsApp:ApiKey` | Não | Sem isso, a mensagem só aparece no log (simulação) |
-| `WhatsApp:OwnerPhone` | Não | WhatsApp da maquiadora (ex.: `5511914834786`) para receber aviso de cada pedido novo |
+| `Deposit:Percent` | Não | Percentual do total cobrado como sinal depois da aprovação (padrão 30) |
+| `Pix:Key` / `Pix:MerchantName` / `Pix:MerchantCity` | Não | Chave PIX que recebe o sinal e nome/cidade que aparecem no pagamento. Sem a chave, não há "copia e cola" |
+| `WhatsApp:PhoneNumberId` / `WhatsApp:AccessToken` | Não | WhatsApp Cloud API oficial (Meta), com modelos aprovados (`deploy/whatsapp-templates.md`). Sem isso, a mensagem só aparece no log (simulação) |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
 | `TravelFee:OriginLatitude` / `TravelFee:OriginLongitude` | Sim, para cobrar deslocamento | Coordenadas do ponto de partida da maquiadora. **Dado pessoal: só nos segredos**, nunca no repositório. Sem elas, a taxa não é calculada |
 | `TravelFee:FreeRadiusKm` / `TravelFee:PricePerKm` | Não | Já em `appsettings.json`: 5.0 km grátis e R$ 5,00 por km |

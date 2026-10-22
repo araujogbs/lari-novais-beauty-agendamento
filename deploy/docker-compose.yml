@@ -35,9 +35,13 @@ services:
       Cors__AllowedOrigins__1: https://www.${SITE_DOMAIN}
       TravelFee__OriginLatitude: ${TRAVEL_ORIGIN_LATITUDE:-0}
       TravelFee__OriginLongitude: ${TRAVEL_ORIGIN_LONGITUDE:-0}
-      WhatsApp__ApiUrl: ${WHATSAPP_API_URL:-}
-      WhatsApp__ApiKey: ${WHATSAPP_API_KEY:-}
-      WhatsApp__OwnerPhone: ${WHATSAPP_OWNER_PHONE:-}
+      WhatsApp__PhoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WhatsApp__AccessToken: ${WHATSAPP_ACCESS_TOKEN:-}
+      # Sinal exigido ao aprovar um pedido (percentual do total) e a chave PIX que recebe
+      Deposit__Percent: ${DEPOSIT_PERCENT:-30}
+      Pix__Key: ${PIX_KEY:-}
+      Pix__MerchantName: ${PIX_MERCHANT_NAME:-Lari Novais Beauty}
+      Pix__MerchantCity: ${PIX_MERCHANT_CITY:-Sao Paulo}
       # Sem o arquivo secrets/google-calendar.json, os eventos ficam só no log (simulação)
       GoogleCalendar__CredentialsJsonPath: /secrets/google-calendar.json
       GoogleCalendar__CalendarId: ${GOOGLE_CALENDAR_ID:-}

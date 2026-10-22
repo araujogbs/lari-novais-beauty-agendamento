@@ -64,7 +64,7 @@ public class PendingExpirationService : BackgroundService
 
             _logger.LogInformation("Pedido {Id} de {Client} expirou sem resposta.", a.Id, a.ClientName);
             await whatsApp.SendExpiredMessageAsync(
-                a.ClientPhone, a.ClientName, a.ServiceItem?.Name ?? "Serviço", BrazilTime.FromUtc(a.StartTime));
+                a.ClientPhone, a.ClientName, a.ServiceNames ?? a.ServiceItem?.Name ?? "Serviço", BrazilTime.FromUtc(a.StartTime));
         }
     }
 }

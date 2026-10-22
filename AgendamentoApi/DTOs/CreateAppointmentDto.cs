@@ -22,7 +22,10 @@ public class CreateAppointmentDto
     // Fotos de referência (máx. 5, validadas no controller)
     public List<IFormFile>? Images { get; set; }
 
-    [Required]
+    // Um ou mais serviços (o valor e a duração somam)
+    public List<int>? ServiceItemIds { get; set; }
+
+    // Compatibilidade com clientes antigos que enviam um serviço só
     public int ServiceItemId { get; set; }
 
     // Horário de início do atendimento.

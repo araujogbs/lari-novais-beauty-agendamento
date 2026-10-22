@@ -1,11 +1,20 @@
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgendamentoApi.Models;
 
 namespace AgendamentoApi.Services;
 
-public class WhatsAppService : IWhatsAppService
+/// <summary>
+/// Envia as mensagens pela WhatsApp Cloud API oficial da Meta, usando modelos (templates) aprovados.
+/// Sem WhatsApp:PhoneNumberId e WhatsApp:AccessToken, só registra no log (testes locais).
+/// Os textos dos modelos ficam em deploy/whatsapp-templates.md e precisam estar aprovados na Meta.
+/// </summary>
+public partial class WhatsAppService : IWhatsAppService
 {
+    private const string Language = "pt_BR";
+
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
     private readonly ILogger<WhatsAppService> _logger;
@@ -18,94 +27,93 @@ public class WhatsAppService : IWhatsAppService
     }
 
     public Task SendRequestReceivedAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime) =>
-        SendAsync(clientPhone,
-            $"Olá {clientName}! ✨\n\n" +
-            $"Recebemos o seu pedido de agendamento para *{serviceName}*.\n" +
-            $"📅 Data: {startTime:dd/MM/yyyy}\n" +
-            $"🕘 Início: {startTime:HH:mm} • término previsto: {endTime:HH:mm}\n\n" +
-            "Ele está *em análise*. Assim que for confirmado, você recebe uma nova mensagem por aqui. " +
-            $"Se não houver resposta em até {AppointmentStatus.PendingExpiration.TotalDays:0} dias, o pedido expira e o horário é liberado. Obrigada!");
+        SendTemplateAsync(clientPhone, "pedido_recebido",
+            clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}", $"{endTime:HH:mm}",
+            $"{AppointmentStatus.PendingExpiration.TotalDays:0}");
 
-    public Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime) =>
-        SendAsync(clientPhone,
-            $"Olá {clientName}! ✨\n\n" +
-            $"O seu agendamento para *{serviceName}* está *confirmado*!\n" +
-            $"📅 Data: {startTime:dd/MM/yyyy}\n" +
-            $"🕘 Início do atendimento: {startTime:HH:mm}\n" +
-            $"✅ Término previsto: {endTime:HH:mm}\n\n" +
-            "Para ver ou cancelar (com mais de 24 h de antecedência), use \"Meus agendamentos\" no site ou no app. " +
-            "Com menos de 24 h, é só responder esta mensagem. Até breve!");
+    public Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime, decimal depositAmount, string? pixCode) =>
+        SendTemplateAsync(clientPhone, "agendamento_confirmado",
+            clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}", $"{endTime:HH:mm}",
+            depositAmount.ToString("C2", new System.Globalization.CultureInfo("pt-BR")),
+            pixCode ?? "A chave PIX será enviada por aqui");
 
     public Task SendRejectionMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, string? reason) =>
-        SendAsync(clientPhone,
-            $"Olá {clientName}!\n\n" +
-            $"Infelizmente não vou conseguir atender o seu pedido de *{serviceName}* em {startTime:dd/MM/yyyy} às {startTime:HH:mm}." +
-            (string.IsNullOrWhiteSpace(reason) ? "" : $"\nMotivo: {reason.Trim()}") +
-            "\n\nSe quiser, responda esta mensagem para combinarmos outro horário. 💕");
+        SendTemplateAsync(clientPhone, "pedido_recusado",
+            clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}",
+            string.IsNullOrWhiteSpace(reason) ? "horário indisponível" : reason);
 
     public Task SendExpiredMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime) =>
-        SendAsync(clientPhone,
-            $"Olá {clientName}!\n\n" +
-            $"Não consegui confirmar a tempo o seu pedido de *{serviceName}* para {startTime:dd/MM/yyyy} às {startTime:HH:mm}, " +
-            "então ele expirou e o horário foi liberado. Desculpe pela demora!\n\n" +
-            "Se ainda quiser o atendimento, responda esta mensagem ou faça um novo pedido pelo site. 💕");
+        SendTemplateAsync(clientPhone, "pedido_expirado",
+            clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}");
 
-    public Task NotifyOwnerNewRequestAsync(string clientName, string clientPhone, string serviceName, DateTime startTime, DateTime endTime)
+    /// <summary>A Meta recusa parâmetros vazios, com quebra de linha, tab ou 4+ espaços seguidos.</summary>
+    internal static string SanitizeParameter(string value)
     {
-        var ownerPhone = _configuration["WhatsApp:OwnerPhone"];
-        if (string.IsNullOrWhiteSpace(ownerPhone))
-        {
-            _logger.LogInformation("[WHATSAPP] Novo pedido de {Client} sem aviso à maquiadora (WhatsApp:OwnerPhone não configurado).", clientName);
-            return Task.CompletedTask;
-        }
-
-        return SendAsync(ownerPhone,
-            "🔔 Novo pedido de agendamento para analisar\n\n" +
-            $"Cliente: {clientName} ({clientPhone})\n" +
-            $"Serviço: {serviceName}\n" +
-            $"📅 {startTime:dd/MM/yyyy}, das {startTime:HH:mm} às {endTime:HH:mm}\n\n" +
-            $"Aprove ou recuse pelo Painel Ateliê (site ou app) em até {AppointmentStatus.PendingExpiration.TotalDays:0} dias, senão o pedido expira.");
+        var clean = SpacesRegex().Replace(value.Trim(), " ");
+        return clean.Length == 0 ? "-" : clean.Length > 200 ? clean[..200] : clean;
     }
 
-    private async Task SendAsync(string phone, string messageText)
-    {
-        var apiUrl = _configuration["WhatsApp:ApiUrl"];
-        var apiKey = _configuration["WhatsApp:ApiKey"];
-
-        // Limpa caracteres especiais do telefone (deixando apenas números)
-        var cleanPhone = new string(phone.Where(char.IsDigit).ToArray());
-
-        // Se ainda não tiver as credenciais preenchidas, apenas regista no log para testes locais
-        if (string.IsNullOrEmpty(apiUrl))
+    internal static string BuildPayload(string cleanPhone, string template, IReadOnlyList<string> parameters) =>
+        JsonSerializer.Serialize(new
         {
-            _logger.LogInformation("\n[SIMULAÇÃO WHATSAPP] Para: {Phone}\nMensagem:\n{Msg}\n", cleanPhone, messageText);
+            messaging_product = "whatsapp",
+            to = cleanPhone,
+            type = "template",
+            template = new
+            {
+                name = template,
+                language = new { code = Language },
+                components = new[]
+                {
+                    new
+                    {
+                        type = "body",
+                        parameters = parameters.Select(p => new { type = "text", text = SanitizeParameter(p) }).ToArray()
+                    }
+                }
+            }
+        });
+
+    private async Task SendTemplateAsync(string phone, string template, params string[] parameters)
+    {
+        var phoneNumberId = _configuration["WhatsApp:PhoneNumberId"];
+        var accessToken = _configuration["WhatsApp:AccessToken"];
+        var apiVersion = _configuration["WhatsApp:ApiVersion"] ?? "v21.0";
+
+        // Só números, com DDI (a Cloud API não aceita +, espaços ou traços)
+        var cleanPhone = new string(phone.Where(char.IsDigit).ToArray());
+        if (cleanPhone.Length is 10 or 11) cleanPhone = "55" + cleanPhone;
+
+        var payload = BuildPayload(cleanPhone, template, parameters);
+
+        if (string.IsNullOrEmpty(phoneNumberId) || string.IsNullOrEmpty(accessToken))
+        {
+            _logger.LogInformation("\n[SIMULAÇÃO WHATSAPP] Para: {Phone}\nModelo: {Template}\n{Payload}\n", cleanPhone, template, payload);
             return;
         }
 
         try
         {
-            var payload = new
+            var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.facebook.com/{apiVersion}/{phoneNumberId}/messages")
             {
-                number = cleanPhone,
-                textMessage = new { text = messageText }
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
-
-            var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-            };
-            request.Headers.Add("apikey", apiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
             var response = await _httpClient.SendAsync(request);
-
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Falha ao enviar mensagem de WhatsApp. Status code: {StatusCode}", response.StatusCode);
+                // O corpo da resposta traz o motivo (modelo não aprovado, número inválido...) e não tem dados sensíveis
+                var body = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("Falha ao enviar o modelo {Template} no WhatsApp. Status {StatusCode}: {Body}", template, (int)response.StatusCode, body);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erro de comunicação com a API de WhatsApp.");
+            _logger.LogError(ex, "Erro de comunicação com a WhatsApp Cloud API.");
         }
     }
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex SpacesRegex();
 }

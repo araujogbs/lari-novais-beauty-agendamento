@@ -19,8 +19,19 @@ public class Appointment
     public double? DistanceKm { get; set; }
     public List<string> ReferenceImages { get; set; } = new();
 
-    // Chave estrangeira para o serviço
+    // Chave estrangeira para o serviço (o primeiro escolhido; veja ServiceItemIds para todos)
     public int ServiceItemId { get; set; }
+
+    // Todos os serviços do pedido (o Atendimento Social aceita mais de um), com nome e valor gravados
+    // no momento do pedido: mudar o preço de um serviço depois não altera pedidos antigos.
+    public List<int> ServiceItemIds { get; set; } = new();
+    public string? ServiceNames { get; set; }
+    // Soma dos serviços x pessoas, sem o deslocamento (null só em bloqueios)
+    public decimal? TotalPrice { get; set; }
+
+    // Sinal exigido para garantir o horário: calculado ao aprovar o pedido; a maquiadora marca quando recebe
+    public decimal? DepositAmount { get; set; }
+    public DateTime? DepositPaidAt { get; set; }
 
     // Para quantas pessoas o serviço foi contratado (valor e duração são multiplicados por este número)
     public int People { get; set; } = 1;
