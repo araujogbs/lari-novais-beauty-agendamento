@@ -1,15 +1,17 @@
 {
   "expo": {
-    "name": "agendamento-mobile",
+    "name": "Lari Novais Beauty",
     "slug": "agendamento-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "br.com.larinovaisbeauty.agendamento"
     },
     "android": {
+      "package": "br.com.larinovaisbeauty.agendamento",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
