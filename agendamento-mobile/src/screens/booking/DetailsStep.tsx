@@ -19,7 +19,7 @@ import { DescriptionSection } from './DescriptionSection';
 import { PeopleSelector } from './PeopleSelector';
 
 interface Props {
-  service: ServiceItem;
+  services: ServiceItem[];
   form: BookingForm;
   notify: Notify;
   openLightbox: OpenLightbox;
@@ -28,13 +28,14 @@ interface Props {
 }
 
 /** Etapa 2: dia, pessoas, horário, dados, descrição e confirmação. */
-export function DetailsStep({ service, form, notify, openLightbox, onBack, onBooked }: Props) {
+export function DetailsStep({ services, form, notify, openLightbox, onBack, onBooked }: Props) {
   const { selectedDate, selectedSlot, people } = form;
   const [submitting, setSubmitting] = useState(false);
 
   // Horários livres da combinação serviço + dia + pessoas. Enquanto a resposta da combinação
   // atual não chega, está carregando (e nunca mostra os horários de outro dia).
-  const slotsKey = `${service.id}|${selectedDate}|${people}`;
+  const serviceIds = services.map((s) => s.id);
+  const slotsKey = `${serviceIds.join(',')}|${selectedDate}|${people}`;
   const [slotsResult, setSlotsResult] = useState<{ key: string; slots: string[] } | null>(null);
   const loadingSlots = slotsResult?.key !== slotsKey;
   const availableSlots = slotsResult && !loadingSlots ? slotsResult.slots : [];
@@ -42,7 +43,7 @@ export function DetailsStep({ service, form, notify, openLightbox, onBack, onBoo
   useEffect(() => {
     let active = true;
     form.setSelectedSlot(null);
-    getAvailableSlots(service.id, selectedDate, people)
+    getAvailableSlots(serviceIds, selectedDate, people)
       .then((slots) => active && setSlotsResult({ key: slotsKey, slots }))
       .catch(() => {
         if (!active) return;
@@ -79,7 +80,7 @@ export function DetailsStep({ service, form, notify, openLightbox, onBack, onBoo
         clientAddress: [form.clientAddress.trim(), form.addressNumber.trim()].filter(Boolean).join(', '),
         cep: form.feeEstimate ? form.clientCep.replace(/\D/g, '') : undefined,
         description: form.description.trim(),
-        serviceItemId: service.id,
+        serviceItemIds: serviceIds,
         startTime: brasiliaToUtcIso(selectedDate, selectedSlot),
         people,
         images: form.images,
@@ -87,9 +88,9 @@ export function DetailsStep({ service, form, notify, openLightbox, onBack, onBoo
 
       const summary: BookedSummary = {
         phone: form.clientPhone,
-        service: service.name,
+        service: services.map((s) => s.name).join(' + '),
         when: `${formatLongDate(selectedDate)} • início às ${selectedSlot}`,
-        total: service.price * people + form.travelFeeValue,
+        total: services.reduce((sum, s) => sum + s.price, 0) * people + form.travelFeeValue,
       };
       form.reset();
       onBooked(summary);
@@ -170,7 +171,7 @@ export function DetailsStep({ service, form, notify, openLightbox, onBack, onBoo
 
       {selectedSlot && (
         <BookingTicket
-          service={service}
+          services={services}
           date={selectedDate}
           slot={selectedSlot}
           people={people}
@@ -179,7 +180,8 @@ export function DetailsStep({ service, form, notify, openLightbox, onBack, onBoo
       )}
 
       <Text style={styles.disclaimerText}>
-        * O valor final pode sofrer acréscimo de taxa de deslocamento dependendo da região.
+        * O valor final pode sofrer acréscimo de taxa de deslocamento dependendo da região. Para garantir o horário, depois
+        que a Lari confirmar o seu pedido você recebe o PIX do sinal.
       </Text>
 
       <View style={common.actionButtons}>

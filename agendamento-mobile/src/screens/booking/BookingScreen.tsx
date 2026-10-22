@@ -22,7 +22,9 @@ export function BookingScreen({ notify, openLightbox, onBooked }: Props) {
   const [step, setStep] = useState<1 | 2>(1);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loadingServices, setLoadingServices] = useState(false);
-  const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // Na ordem da lista, não na ordem dos toques
+  const selectedServices = services.filter((s) => selectedIds.includes(s.id));
   const form = useBookingForm(notify);
 
   useEffect(() => {
@@ -39,9 +41,14 @@ export function BookingScreen({ notify, openLightbox, onBooked }: Props) {
     })();
   }, [notify]);
 
-  const handleSelectService = (service: ServiceItem) => {
+  const handleToggleService = (service: ServiceItem) => {
     animateLayout();
-    setSelectedService(service);
+    setSelectedIds((ids) => (ids.includes(service.id) ? ids.filter((id) => id !== service.id) : [...ids, service.id]));
+  };
+
+  const handleContinue = () => {
+    if (!selectedServices.length) return;
+    animateLayout();
     setStep(2);
   };
 
@@ -56,17 +63,27 @@ export function BookingScreen({ notify, openLightbox, onBooked }: Props) {
       <View style={common.header}>
         <Text style={common.title}>{step === 1 ? 'Serviços & Atendimentos' : 'Selecione o Horário'}</Text>
         <Text style={common.subtitle}>
-          {step === 1 || !selectedService
+          {step === 1 || !selectedServices.length
             ? 'Beleza com naturalidade indo até você'
-            : `${selectedService.name} • R$ ${formatBRL(selectedService.price)}`}
+            : `${selectedServices.map((s) => s.name).join(' + ')} • R$ ${formatBRL(
+                selectedServices.reduce((sum, s) => sum + s.price, 0),
+              )}`}
         </Text>
       </View>
 
-      {step === 1 && <ServiceStep services={services} loading={loadingServices} onSelect={handleSelectService} />}
+      {step === 1 && (
+        <ServiceStep
+          services={services}
+          loading={loadingServices}
+          selectedIds={selectedIds}
+          onToggle={handleToggleService}
+          onContinue={handleContinue}
+        />
+      )}
 
-      {step === 2 && selectedService && (
+      {step === 2 && selectedServices.length > 0 && (
         <DetailsStep
-          service={selectedService}
+          services={selectedServices}
           form={form}
           notify={notify}
           openLightbox={openLightbox}

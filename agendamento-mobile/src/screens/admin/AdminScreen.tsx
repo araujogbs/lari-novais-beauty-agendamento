@@ -7,6 +7,7 @@ import {
   cancelAppointment,
   getAdminAppointments,
   getPendingAppointments,
+  markDepositPaid,
   rejectAppointment,
 } from '../../services/appointments';
 import { authService } from '../../services/auth';
@@ -85,12 +86,24 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
   const handleApprove = async (id: number) => {
     try {
       await approveAppointment(id);
-      notify('Agendamento confirmado', 'A cliente vai receber a confirmação pelo WhatsApp.', 'success');
+      notify('Agendamento confirmado', 'A cliente recebe a confirmação, com o PIX do sinal, pelo WhatsApp.', 'success');
       await load(date);
     } catch (error: any) {
       if (!(await handleAuthError(error))) {
         notify('Erro', getErrorMessage(error, 'Não foi possível aprovar o pedido.'));
         load(date);
+      }
+    }
+  };
+
+  const handleDepositPaid = async (id: number) => {
+    try {
+      await markDepositPaid(id);
+      notify('Sinal recebido', 'O sinal foi registrado como pago.', 'success');
+      await load(date);
+    } catch (error: any) {
+      if (!(await handleAuthError(error))) {
+        notify('Erro', getErrorMessage(error, 'Não foi possível registrar o sinal.'));
       }
     }
   };
@@ -118,6 +131,7 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
       onCancel={handleCancel}
       onApprove={handleApprove}
       onReject={handleReject}
+      onDepositPaid={handleDepositPaid}
       showDate={showDate}
     />
   );

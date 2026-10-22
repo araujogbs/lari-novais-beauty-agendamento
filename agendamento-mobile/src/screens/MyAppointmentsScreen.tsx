@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { cancelAsClient, getMyAppointments } from '../services/appointments';
 import { common } from '../styles/common';
 import { THEME } from '../theme';
@@ -20,6 +21,17 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const copyPix = async (appt: MyAppointment) => {
+    if (!appt.pixCode) return;
+    try {
+      await Clipboard.setStringAsync(appt.pixCode);
+      setCopiedId(appt.id);
+    } catch {
+      notify('Erro', 'Não foi possível copiar o código PIX.');
+    }
+  };
 
   const search = async (phoneToSearch: string = phone) => {
     if (phoneToSearch.replace(/\D/g, '').length < 10) {
@@ -105,6 +117,27 @@ export function MyAppointmentsScreen({ notify, initialPhone = '' }: Props) {
                 </Text>
               ) : null}
               {appt.clientAddress ? <Text style={common.adminPhoneText}>Local: {appt.clientAddress}</Text> : null}
+              {appt.status === 'Confirmed' && appt.depositAmount && !appt.depositPaid ? (
+                <View style={styles.depositBox}>
+                  <Text style={styles.depositText}>
+                    Sinal para garantir o horário: R$ {formatBRL(appt.depositAmount)}
+                    {appt.pixCode ? ' (PIX copia e cola)' : '. A Lari envia a chave PIX por WhatsApp.'}
+                  </Text>
+                  {appt.pixCode ? (
+                    <>
+                      <Text style={styles.pixCode} selectable numberOfLines={3}>
+                        {appt.pixCode}
+                      </Text>
+                      <TouchableOpacity style={[common.btnPrimary, { flex: 0, marginTop: 8 }]} onPress={() => copyPix(appt)}>
+                        <Text style={common.btnPrimaryText}>{copiedId === appt.id ? 'Código copiado!' : 'Copiar PIX'}</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
+              {appt.status === 'Confirmed' && appt.depositPaid ? (
+                <Text style={styles.depositText}>Sinal recebido. Obrigada!</Text>
+              ) : null}
             </View>
 
             {confirmCancelId === appt.id ? (
@@ -135,4 +168,14 @@ const styles = StyleSheet.create({
   status: { marginTop: 2, fontSize: 11, fontWeight: '600', textTransform: 'uppercase' },
   statusPending: { color: '#B7791F' },
   statusConfirmed: { color: '#386641' },
+  depositBox: { marginTop: 8 },
+  depositText: { marginTop: 6, fontSize: 12, color: THEME.text },
+  pixCode: {
+    marginTop: 6,
+    padding: 8,
+    fontSize: 11,
+    color: THEME.textLight,
+    backgroundColor: THEME.cream,
+    borderRadius: 6,
+  },
 });

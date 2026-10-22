@@ -27,7 +27,9 @@ export function SuccessScreen({ booked, onContinue }: Props) {
         <Ionicons name="checkmark" size={44} color={THEME.white} />
       </View>
       <Text style={styles.successTitle}>Agendamento em análise</Text>
-      <Text style={styles.successSub}>Você receberá a confirmação pelo WhatsApp.</Text>
+      <Text style={styles.successSub}>
+        Você receberá a confirmação pelo WhatsApp, junto com o PIX do sinal que garante o seu horário.
+      </Text>
       <View style={styles.successCard}>
         <Text style={common.ticketService}>{booked.service}</Text>
         <Text style={common.ticketDate}>{booked.when}</Text>

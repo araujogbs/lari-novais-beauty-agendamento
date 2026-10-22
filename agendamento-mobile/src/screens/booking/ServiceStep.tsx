@@ -10,35 +10,63 @@ import { formatBRL } from '../../utils/format';
 interface Props {
   services: ServiceItem[];
   loading: boolean;
-  onSelect: (service: ServiceItem) => void;
+  selectedIds: number[];
+  onToggle: (service: ServiceItem) => void;
+  onContinue: () => void;
 }
 
-/** Etapa 1: lista de serviços. */
-export function ServiceStep({ services, loading, onSelect }: Props) {
+/** Etapa 1: lista de serviços. Mais de um pode ser marcado; o valor e a duração somam. */
+export function ServiceStep({ services, loading, selectedIds, onToggle, onContinue }: Props) {
   if (loading) return <SkeletonList height={72} />;
 
+  const total = services.filter((s) => selectedIds.includes(s.id)).reduce((sum, s) => sum + s.price, 0);
+
   return (
-    <FlatList
-      data={services}
-      keyExtractor={(item) => item.id.toString()}
-      contentContainerStyle={common.list}
-      showsVerticalScrollIndicator={false}
-      renderItem={({ item }) => (
-        <TouchableOpacity style={styles.serviceCard} activeOpacity={0.85} onPress={() => onSelect(item)}>
-          <View style={styles.serviceInfo}>
-            <Text style={styles.serviceTitle}>{item.name}</Text>
-            <View style={styles.durationRow}>
-              <Ionicons name="time-outline" size={14} color={THEME.textMuted} />
-              <Text style={styles.durationText}>{item.durationMinutes} minutos</Text>
-            </View>
-          </View>
-          <View style={styles.priceContainer}>
-            <Text style={styles.priceText}>R$ {formatBRL(item.price)}</Text>
-            <Ionicons name="chevron-forward" size={16} color={THEME.roseDark} />
-          </View>
-        </TouchableOpacity>
+    <View style={{ flex: 1 }}>
+      <FlatList
+        data={services}
+        keyExtractor={(item) => item.id.toString()}
+        extraData={selectedIds}
+        contentContainerStyle={common.list}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={<Text style={styles.hint}>Você pode marcar mais de um serviço.</Text>}
+        renderItem={({ item }) => {
+          const selected = selectedIds.includes(item.id);
+          return (
+            <TouchableOpacity
+              style={[styles.serviceCard, selected && styles.serviceCardSelected]}
+              activeOpacity={0.85}
+              onPress={() => onToggle(item)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selected }}
+            >
+              <Ionicons
+                name={selected ? 'checkbox' : 'square-outline'}
+                size={22}
+                color={selected ? THEME.roseDark : THEME.textMuted}
+                style={{ marginRight: 12 }}
+              />
+              <View style={styles.serviceInfo}>
+                <Text style={styles.serviceTitle}>{item.name}</Text>
+                <View style={styles.durationRow}>
+                  <Ionicons name="time-outline" size={14} color={THEME.textMuted} />
+                  <Text style={styles.durationText}>{item.durationMinutes} minutos</Text>
+                </View>
+              </View>
+              <Text style={styles.priceText}>R$ {formatBRL(item.price)}</Text>
+            </TouchableOpacity>
+          );
+        }}
+      />
+      {selectedIds.length > 0 && (
+        <View style={styles.footer}>
+          <Text style={styles.footerTotal}>Total: R$ {formatBRL(total)}</Text>
+          <TouchableOpacity style={[common.btnPrimary, { flex: 0, paddingHorizontal: 24 }]} onPress={onContinue}>
+            <Text style={common.btnPrimaryText}>Continuar</Text>
+          </TouchableOpacity>
+        </View>
       )}
-    />
+    </View>
   );
 }
 
@@ -58,6 +86,29 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  serviceCardSelected: {
+    borderColor: THEME.roseDark,
+    backgroundColor: THEME.white,
+  },
+  hint: {
+    fontSize: 12,
+    color: THEME.textMuted,
+    marginBottom: 10,
+  },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+    backgroundColor: THEME.white,
+  },
+  footerTotal: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: THEME.text,
+  },
   serviceInfo: {
     flex: 1,
   },
@@ -75,11 +126,6 @@ const styles = StyleSheet.create({
   durationText: {
     fontSize: 12,
     color: THEME.textMuted,
-  },
-  priceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
   },
   priceText: {
     fontSize: 15,

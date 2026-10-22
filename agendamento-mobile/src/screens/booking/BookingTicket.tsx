@@ -8,7 +8,7 @@ import { formatLongDate } from '../../utils/date';
 import { formatBRL, formatEstimatedRange } from '../../utils/format';
 
 interface Props {
-  service: ServiceItem;
+  services: ServiceItem[];
   date: string;
   slot: string;
   people: number;
@@ -16,8 +16,9 @@ interface Props {
 }
 
 /** "Convite" com o resumo do agendamento e o valor. */
-export function BookingTicket({ service, date, slot, people, travelFee }: Props) {
-  const serviceTotal = service.price * people;
+export function BookingTicket({ services, date, slot, people, travelFee }: Props) {
+  const serviceTotal = services.reduce((sum, s) => sum + s.price, 0) * people;
+  const durationMinutes = services.reduce((sum, s) => sum + s.durationMinutes, 0);
 
   return (
     <View style={styles.ticket}>
@@ -26,13 +27,13 @@ export function BookingTicket({ service, date, slot, people, travelFee }: Props)
         <Text style={styles.ticketKicker}>Seu convite</Text>
         <Ionicons name="sparkles" size={18} color={THEME.roseDark} />
       </View>
-      <Text style={common.ticketService}>{service.name}</Text>
+      <Text style={common.ticketService}>{services.map((s) => s.name).join(' + ')}</Text>
       <Text style={common.ticketDate}>{formatLongDate(date)}</Text>
       <View style={common.ticketDivider} />
       <View style={styles.ticketFooter}>
         <View>
           <Text style={common.ticketLabel}>Início → término previsto</Text>
-          <Text style={styles.ticketValue}>{formatEstimatedRange(slot, service.durationMinutes, people)}</Text>
+          <Text style={styles.ticketValue}>{formatEstimatedRange(slot, durationMinutes, people)}</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={common.ticketLabel}>{travelFee > 0 ? 'Valor total' : 'Valor'}</Text>

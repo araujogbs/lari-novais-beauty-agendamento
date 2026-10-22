@@ -7,8 +7,9 @@ import type { AppointmentItem, FeeEstimate, LightboxSource, MyAppointment, Servi
 
 export const getServices = async () => (await api.get<ServiceItem[]>('/services')).data;
 
-export const getAvailableSlots = async (serviceId: number, date: string, people: number) =>
-  (await api.get<string[]>('/appointments/available-slots', { params: { serviceId, date, people } })).data;
+export const getAvailableSlots = async (serviceIds: number[], date: string, people: number) =>
+  (await api.get<string[]>('/appointments/available-slots', { params: { serviceIds: serviceIds.join(','), date, people } }))
+    .data;
 
 export const estimateFee = async (cep: string) =>
   (await api.get<FeeEstimate>('/appointments/estimate-fee', { params: { cep } })).data;
@@ -19,7 +20,7 @@ export interface BookingPayload {
   clientAddress: string;
   cep?: string; // só enviado quando a taxa foi calculada
   description: string;
-  serviceItemId: number;
+  serviceItemIds: number[]; // um ou mais serviços: valor e duração somam
   startTime: string; // ISO/UTC: início do atendimento
   people: number;
   images: ImagePickerAsset[];
@@ -33,7 +34,7 @@ export const createAppointment = (payload: BookingPayload) => {
   form.append('clientAddress', payload.clientAddress);
   if (payload.cep) form.append('cep', payload.cep);
   form.append('description', payload.description);
-  form.append('serviceItemId', String(payload.serviceItemId));
+  payload.serviceItemIds.forEach((id) => form.append('serviceItemIds', String(id)));
   form.append('startTime', payload.startTime);
   form.append('people', String(payload.people));
   payload.images.forEach((img, i) => {
@@ -73,6 +74,9 @@ export const approveAppointment = (id: number) => api.post(`/appointments/${id}/
 /** Recusa o pedido: libera o horário e avisa a cliente (com o motivo, se houver). */
 export const rejectAppointment = (id: number, reason?: string) =>
   api.post(`/appointments/${id}/reject`, { reason: reason?.trim() || undefined });
+
+/** Marca que o sinal do pedido confirmado foi recebido. */
+export const markDepositPaid = (id: number) => api.post(`/appointments/${id}/deposit-paid`);
 
 // A API espera uma string JSON (com aspas); o axios enviaria Cancelled cru e dava 400
 export const cancelAppointment = (id: number) =>

@@ -27,6 +27,12 @@ export interface AppointmentItem {
   people?: number;
   /** Prazo para aprovar ou recusar (só nos pedidos em análise). */
   expiresAt?: string | null;
+  /** Serviços do pedido juntos ("Maquiagem + Penteado") e o valor deles, sem deslocamento. */
+  serviceNames?: string | null;
+  totalPrice?: number | null;
+  /** Sinal calculado ao aprovar; `depositPaidAt` é preenchido quando a maquiadora marca que recebeu. */
+  depositAmount?: number | null;
+  depositPaidAt?: string | null;
 }
 
 export interface MyAppointment {
@@ -40,6 +46,10 @@ export interface MyAppointment {
   travelFee?: number | null;
   distanceKm?: number | null;
   status: AppointmentStatus;
+  /** Sinal para garantir o horário (depois da confirmação) e o PIX copia e cola enquanto estiver a pagar. */
+  depositAmount?: number | null;
+  depositPaid?: boolean;
+  pixCode?: string | null;
 }
 
 export interface FeeEstimate {

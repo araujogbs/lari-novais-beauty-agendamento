@@ -19,6 +19,7 @@ interface Props {
   onCancel: (id: number) => void;
   onApprove: (id: number) => Promise<void>;
   onReject: (id: number, reason: string) => Promise<void>;
+  onDepositPaid: (id: number) => Promise<void>;
   /** Mostra a data junto do horário (na lista de pedidos em análise, que mistura dias). */
   showDate?: boolean;
 }
@@ -33,7 +34,17 @@ const BADGES: Record<AppointmentStatus, { text: string; color: string }> = {
 };
 
 /** Um atendimento (ou bloqueio) na lista do painel da maquiadora. */
-export function AdminAppointmentCard({ item, token, notify, openLightbox, onCancel, onApprove, onReject, showDate }: Props) {
+export function AdminAppointmentCard({
+  item,
+  token,
+  notify,
+  openLightbox,
+  onCancel,
+  onApprove,
+  onReject,
+  onDepositPaid,
+  showDate,
+}: Props) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -43,6 +54,8 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
   const isBlocked = item.status === 'Blocked';
   const isInactive = item.status === 'Cancelled' || item.status === 'Rejected' || item.status === 'Expired';
   const badge = BADGES[item.status] ?? BADGES.Confirmed;
+  const servicesTotal = item.totalPrice ?? (item.serviceItem?.price ?? 0) * people;
+  const owesDeposit = item.status === 'Confirmed' && !!item.depositAmount && !item.depositPaidAt;
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -71,7 +84,7 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
       <View style={{ flex: 1 }}>
         <Text style={common.adminClientTitle}>{item.clientName}</Text>
         <Text style={common.adminSubText}>
-          {item.serviceItem?.name || 'Serviço'}
+          {item.serviceNames ?? item.serviceItem?.name ?? 'Serviço'}
           {people > 1 ? ` (${people} pessoas)` : ''} • {showDate ? `${formatShortDateBR(item.startTime)}, ` : ''}
           {formatTimeBR(item.startTime)} às {formatTimeBR(item.endTime)}
         </Text>
@@ -80,8 +93,13 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
         {item.travelFee != null && item.distanceKm != null ? (
           <Text style={common.adminPhoneText}>
             {item.travelFee > 0
-              ? `🚗 ${item.distanceKm.toFixed(1)} km • Deslocamento: R$ ${formatBRL(item.travelFee)} • Total: R$ ${formatBRL((item.serviceItem?.price ?? 0) * people + item.travelFee)}`
+              ? `🚗 ${item.distanceKm.toFixed(1)} km • Deslocamento: R$ ${formatBRL(item.travelFee)} • Total: R$ ${formatBRL(servicesTotal + item.travelFee)}`
               : `✨ ${item.distanceKm.toFixed(1)} km • Deslocamento gratuito`}
+          </Text>
+        ) : null}
+        {item.status === 'Confirmed' && item.depositAmount ? (
+          <Text style={common.adminPhoneText}>
+            Sinal R$ {formatBRL(item.depositAmount)}: {item.depositPaidAt ? 'recebido' : 'aguardando pagamento'}
           </Text>
         ) : null}
         {item.description ? <Text style={common.adminPhoneText}>Pedido: {item.description}</Text> : null}
@@ -108,6 +126,25 @@ export function AdminAppointmentCard({ item, token, notify, openLightbox, onCanc
             Responder até {formatShortDateBR(item.expiresAt)}, {formatTimeBR(item.expiresAt)} (depois expira sozinho)
           </Text>
         ) : null}
+
+        {owesDeposit && (
+          <View style={styles.decisionRow}>
+            <TouchableOpacity
+              style={[styles.decisionBtn, styles.approveBtn]}
+              disabled={busy}
+              onPress={() => run(() => onDepositPaid(item.id))}
+            >
+              {busy ? (
+                <ActivityIndicator size="small" color={THEME.white} />
+              ) : (
+                <>
+                  <Ionicons name="cash-outline" size={16} color={THEME.white} />
+                  <Text style={styles.approveText}>Sinal recebido</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Pedido em análise: aprovar ou recusar (com motivo opcional) */}
         {isPending && !rejecting && (
