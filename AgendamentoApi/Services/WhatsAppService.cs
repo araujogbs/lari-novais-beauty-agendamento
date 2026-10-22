@@ -26,16 +26,16 @@ public partial class WhatsAppService : IWhatsAppService
         _logger = logger;
     }
 
-    public Task SendRequestReceivedAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime) =>
+    public Task SendRequestReceivedAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime, string manageUrl) =>
         SendTemplateAsync(clientPhone, "pedido_recebido",
             clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}", $"{endTime:HH:mm}",
-            $"{AppointmentStatus.PendingExpiration.TotalDays:0}");
+            $"{AppointmentStatus.PendingExpiration.TotalDays:0}", manageUrl);
 
-    public Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime, decimal depositAmount, string? pixCode) =>
+    public Task SendConfirmationMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, DateTime endTime, decimal depositAmount, string? pixCode, string manageUrl) =>
         SendTemplateAsync(clientPhone, "agendamento_confirmado",
             clientName, serviceName, $"{startTime:dd/MM/yyyy}", $"{startTime:HH:mm}", $"{endTime:HH:mm}",
             depositAmount.ToString("C2", new System.Globalization.CultureInfo("pt-BR")),
-            pixCode ?? "A chave PIX será enviada por aqui");
+            pixCode ?? "A chave PIX será enviada por aqui", manageUrl);
 
     public Task SendRejectionMessageAsync(string clientPhone, string clientName, string serviceName, DateTime startTime, string? reason) =>
         SendTemplateAsync(clientPhone, "pedido_recusado",

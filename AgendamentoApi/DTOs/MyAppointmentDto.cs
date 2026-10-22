@@ -6,6 +6,8 @@ namespace AgendamentoApi.DTOs;
 public class MyAppointmentDto
 {
     public int Id { get; set; }
+    // Código secreto do agendamento, para a cliente cancelar (só volta para quem já o enviou)
+    public string ManageToken { get; set; } = string.Empty;
     public string ServiceName { get; set; } = string.Empty;
     // Valor total do serviço (preço unitário x pessoas), sem o deslocamento
     public decimal Price { get; set; }
@@ -25,6 +27,11 @@ public class MyAppointmentDto
 
 public class ClientCancelDto
 {
-    [Required(ErrorMessage = "Informe o telefone usado no agendamento")]
-    public string Phone { get; set; } = string.Empty;
+    [Required(ErrorMessage = "Informe o código do agendamento")]
+    public string Token { get; set; } = string.Empty;
+}
+
+public class LookupDto
+{
+    public List<string>? Tokens { get; set; }
 }

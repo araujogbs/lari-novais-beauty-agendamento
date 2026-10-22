@@ -4,17 +4,17 @@ Crie no **WhatsApp Manager** (Meta Business Suite > Modelos de mensagem), com es
 categoria **Utilidade** e idioma **Português (BR)**. O código (`WhatsAppService`) envia os parâmetros nesta ordem.
 
 ## pedido_recebido
-Parâmetros: 1 nome, 2 serviço, 3 data, 4 início, 5 término, 6 dias de prazo
+Parâmetros: 1 nome, 2 serviço, 3 data, 4 início, 5 término, 6 dias de prazo, 7 link do agendamento
 
 ```
-Olá {{1}}! ✨ Recebemos o seu pedido de agendamento para {{2}}. Data: {{3}}. Início: {{4}}, término previsto: {{5}}. Ele está em análise e, assim que for confirmado, você recebe uma nova mensagem por aqui. Se não houver resposta em até {{6}} dias, o pedido expira e o horário é liberado. Obrigada!
+Olá {{1}}! ✨ Recebemos o seu pedido de agendamento para {{2}}. Data: {{3}}. Início: {{4}}, término previsto: {{5}}. Ele está em análise e, assim que for confirmado, você recebe uma nova mensagem por aqui. Se não houver resposta em até {{6}} dias, o pedido expira e o horário é liberado. Acompanhe ou cancele pelo seu link: {{7}} Obrigada!
 ```
 
 ## agendamento_confirmado
-Parâmetros: 1 nome, 2 serviço, 3 data, 4 início, 5 término, 6 valor do sinal, 7 PIX copia e cola
+Parâmetros: 1 nome, 2 serviço, 3 data, 4 início, 5 término, 6 valor do sinal, 7 PIX copia e cola, 8 link do agendamento
 
 ```
-Olá {{1}}! ✨ O seu agendamento para {{2}} está confirmado! Data: {{3}}. Início do atendimento: {{4}}, término previsto: {{5}}. Para garantir o horário, faça o sinal de {{6}} por PIX (copia e cola): {{7}} Para ver ou cancelar (com mais de 24 h de antecedência), use "Meus agendamentos" no site. Com menos de 24 h, é só responder esta mensagem. Até breve!
+Olá {{1}}! ✨ O seu agendamento para {{2}} está confirmado! Data: {{3}}. Início do atendimento: {{4}}, término previsto: {{5}}. Para garantir o horário, faça o sinal de {{6}} por PIX (copia e cola): {{7}} Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {{8}} Com menos de 24 h, é só responder esta mensagem. Até breve!
 ```
 
 ## pedido_recusado

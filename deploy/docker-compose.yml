@@ -33,6 +33,8 @@ services:
       Admin__PasswordHash: ${ADMIN_PASSWORD_HASH:?defina ADMIN_PASSWORD_HASH no .env}
       Cors__AllowedOrigins__0: https://${SITE_DOMAIN}
       Cors__AllowedOrigins__1: https://www.${SITE_DOMAIN}
+      # Endereço do site nos links de "Meus agendamentos" enviados por WhatsApp
+      Site__Url: https://${SITE_DOMAIN}
       TravelFee__OriginLatitude: ${TRAVEL_ORIGIN_LATITUDE:-0}
       TravelFee__OriginLongitude: ${TRAVEL_ORIGIN_LONGITUDE:-0}
       WhatsApp__PhoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID:-}

@@ -46,6 +46,7 @@ public class AppointmentsController : ControllerBase
     private readonly IGoogleCalendarService _calendarService; // Novo campo
     private readonly ITravelFeeService _travelFeeService;
     private readonly IDepositService _depositService;
+    private readonly IManageTokenService _manageTokens;
 
     public AppointmentsController(
         AppDbContext context,
@@ -53,6 +54,7 @@ public class AppointmentsController : ControllerBase
         IGoogleCalendarService calendarService, // Injetado aqui
         ITravelFeeService travelFeeService,
         IDepositService depositService,
+        IManageTokenService manageTokens,
         IWebHostEnvironment env,
         IConfiguration configuration)
     {
@@ -64,6 +66,7 @@ public class AppointmentsController : ControllerBase
         _calendarService = calendarService;
         _travelFeeService = travelFeeService;
         _depositService = depositService;
+        _manageTokens = manageTokens;
     }
 
     private const int MaxServices = 5;
@@ -246,9 +249,12 @@ public class AppointmentsController : ControllerBase
         // A confirmação e o evento no Google Calendar só acontecem quando a maquiadora aprova.
         await _whatsAppService.SendRequestReceivedAsync(
             appointment.ClientPhone, appointment.ClientName, serviceNames,
-            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime));
+            ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
+            _manageTokens.BuildUrl(appointment.Id));
 
-        return CreatedAtAction(nameof(GetAppointments), new { id = appointment.Id }, appointment);
+        // Só o id e o código secreto: com ele a cliente acompanha e cancela o pedido (nunca o registro inteiro)
+        return StatusCode(StatusCodes.Status201Created,
+            new { id = appointment.Id, manageToken = _manageTokens.Create(appointment.Id) });
     }
 
     // GET: api/appointments/pending (pedidos futuros aguardando aprovação, de qualquer data)
@@ -288,7 +294,8 @@ public class AppointmentsController : ControllerBase
         await _whatsAppService.SendConfirmationMessageAsync(
             appointment.ClientPhone, appointment.ClientName, serviceName,
             ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
-            deposit, _depositService.BuildPixCode(appointment.Id, deposit));
+            deposit, _depositService.BuildPixCode(appointment.Id, deposit),
+            _manageTokens.BuildUrl(appointment.Id));
         await _calendarService.CreateEventAsync(
             $"{serviceName} - {appointment.ClientName}",
             BuildCalendarDescription(appointment),
@@ -341,72 +348,74 @@ public class AppointmentsController : ControllerBase
     }
 
 
-    // Só os dígitos; tira o DDI 55 quando o número vem completo (13 dígitos) para comparar com o salvo
-    private static string NormalizePhone(string? phone)
-    {
-        var digits = new string((phone ?? string.Empty).Where(char.IsDigit).ToArray());
-        return digits.Length > 11 && digits.StartsWith("55") ? digits[2..] : digits;
-    }
+    private const int MaxLookupTokens = 20;
 
-    // GET: api/appointments/my-appointments?phone=(11) 99999-9999 (público)
-    [HttpGet("my-appointments")]
+    private static MyAppointmentDto ToMyAppointment(Appointment a, string token, string? pixCode) => new()
+    {
+        Id = a.Id,
+        ManageToken = token,
+        ServiceName = ServiceLabel(a),
+        Price = ServicesTotal(a),
+        People = a.People,
+        StartTime = a.StartTime,
+        EndTime = a.EndTime,
+        ClientAddress = a.ClientAddress,
+        TravelFee = a.TravelFee,
+        DistanceKm = a.DistanceKm,
+        Status = a.Status,
+        DepositAmount = a.DepositAmount,
+        DepositPaid = a.DepositPaidAt != null,
+        PixCode = pixCode
+    };
+
+    // POST: api/appointments/lookup (público; body { "tokens": ["12.abc..."] })
+    // A cliente só vê o que tem o código secreto (guardado no aparelho ou no link enviado por WhatsApp).
+    // Nunca se busca por telefone ou nome: saber o número de alguém não dá acesso ao agendamento dela.
+    [HttpPost("lookup")]
     [EnableRateLimiting("lookup")]
-    public async Task<ActionResult<IEnumerable<MyAppointmentDto>>> GetMyAppointments([FromQuery] string? phone)
+    public async Task<ActionResult<IEnumerable<MyAppointmentDto>>> Lookup([FromBody] LookupDto dto)
     {
-        var wanted = NormalizePhone(phone);
-        if (wanted.Length < 10)
+        var tokens = (dto.Tokens ?? []).Take(MaxLookupTokens).ToList();
+        var byId = new Dictionary<int, string>();
+        foreach (var token in tokens)
         {
-            return BadRequest(new { message = "Informe um WhatsApp válido." });
+            if (_manageTokens.TryGetAppointmentId(token) is int id) byId[id] = token.Trim();
         }
+        if (byId.Count == 0) return Ok(Array.Empty<MyAppointmentDto>());
 
-        // Telefones são salvos com máscara; a comparação por dígitos é feita em memória
-        // sobre os futuros em análise ou confirmados (conjunto pequeno).
+        var ids = byId.Keys.ToList();
         var now = DateTime.UtcNow;
-        var future = await _context.Appointments
+        var found = await _context.Appointments
             .Include(a => a.ServiceItem)
-            .Where(a => (a.Status == AppointmentStatus.Pending || a.Status == AppointmentStatus.Confirmed) &&
+            .Where(a => ids.Contains(a.Id) &&
+                        (a.Status == AppointmentStatus.Pending || a.Status == AppointmentStatus.Confirmed) &&
                         a.StartTime >= now)
             .OrderBy(a => a.StartTime)
             .ToListAsync();
 
-        var result = future
-            .Where(a => NormalizePhone(a.ClientPhone) == wanted)
-            .Select(a => new MyAppointmentDto
-            {
-                Id = a.Id,
-                ServiceName = ServiceLabel(a),
-                Price = ServicesTotal(a),
-                People = a.People,
-                StartTime = a.StartTime,
-                EndTime = a.EndTime,
-                ClientAddress = a.ClientAddress,
-                TravelFee = a.TravelFee,
-                DistanceKm = a.DistanceKm,
-                Status = a.Status,
-                DepositAmount = a.DepositAmount,
-                DepositPaid = a.DepositPaidAt != null,
-                PixCode = a.Status == AppointmentStatus.Confirmed && a.DepositAmount is > 0 && a.DepositPaidAt == null
-                    ? _depositService.BuildPixCode(a.Id, a.DepositAmount.Value)
-                    : null
-            })
-            .ToList();
+        var result = found.Select(a => ToMyAppointment(
+            a,
+            byId[a.Id],
+            a.Status == AppointmentStatus.Confirmed && a.DepositAmount is > 0 && a.DepositPaidAt == null
+                ? _depositService.BuildPixCode(a.Id, a.DepositAmount.Value)
+                : null)).ToList();
 
         return Ok(result);
     }
 
-    // POST: api/appointments/5/client-cancel (público; exige o telefone do agendamento)
+    // POST: api/appointments/5/client-cancel (público; exige o código secreto do agendamento)
     [HttpPost("{id}/client-cancel")]
     [EnableRateLimiting("lookup")]
     public async Task<IActionResult> ClientCancel(int id, [FromBody] ClientCancelDto dto)
     {
-        var appointment = await _context.Appointments.FindAsync(id);
-
-        // Mesma resposta para "não existe" e "telefone não confere", para não revelar agendamentos de terceiros
+        // Mesma resposta para "não existe" e "código não confere", para não revelar agendamentos de terceiros
+        var appointment = _manageTokens.TryGetAppointmentId(dto.Token) == id
+            ? await _context.Appointments.FindAsync(id)
+            : null;
         if (appointment == null ||
-            (appointment.Status != AppointmentStatus.Pending && appointment.Status != AppointmentStatus.Confirmed) ||
-            NormalizePhone(appointment.ClientPhone) != NormalizePhone(dto.Phone))
+            (appointment.Status != AppointmentStatus.Pending && appointment.Status != AppointmentStatus.Confirmed))
         {
-            return NotFound(new { message = "Agendamento não encontrado para este telefone." });
+            return NotFound(new { message = "Agendamento não encontrado." });
         }
 
         // Pedido ainda em análise pode ser retirado a qualquer momento; confirmado só com mais de 24 h
