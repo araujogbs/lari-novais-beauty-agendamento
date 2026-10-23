@@ -5,6 +5,7 @@ namespace AgendamentoApi.Services;
 /// <summary>
 /// Textos que a maquiadora manda para a cliente pelo WhatsApp dela (o painel abre a conversa com a mensagem pronta).
 /// Os horários chegam já no fuso de Brasília.
+/// Sem emojis: o WhatsApp mostra "�" no lugar deles quando vêm no text= do link wa.me.
 /// </summary>
 public static class ClientMessages
 {
@@ -17,7 +18,7 @@ public static class ClientMessages
         var details = $"Data: {start:dd/MM/yyyy}. Início do atendimento: {start:HH:mm}, término previsto: {end:HH:mm}.";
 
         if (depositPaid)
-            return $"Olá {name}! ✨ Recebi o seu sinal, o seu agendamento para {service} está garantido. {details} " +
+            return $"Olá {name}! Recebi o seu sinal, o seu agendamento para {service} está garantido. {details} " +
                    $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} Até breve!";
 
         var deposit = depositAmount is > 0
@@ -25,7 +26,7 @@ public static class ClientMessages
               (pixCode is null ? ": vou te enviar a chave PIX por aqui. " : $" (copia e cola):\n\n{pixCode}\n\n")
             : " ";
 
-        return $"Olá {name}! ✨ O seu agendamento para {service} está confirmado! {details}{deposit}" +
+        return $"Olá {name}! O seu agendamento para {service} está confirmado! {details}{deposit}" +
                $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} " +
                "Com menos de 24 h, é só responder esta mensagem. Até breve!";
     }
@@ -34,7 +35,7 @@ public static class ClientMessages
     {
         var why = string.IsNullOrWhiteSpace(reason) ? "horário indisponível" : reason.Trim();
         return $"Olá {name}! Infelizmente não vou conseguir atender o seu pedido de {service} em {start:dd/MM/yyyy} às {start:HH:mm}. " +
-               $"Motivo: {why}. Se quiser, responda esta mensagem para combinarmos outro horário. 💕";
+               $"Motivo: {why}. Se quiser, responda esta mensagem para combinarmos outro horário.";
     }
 
     /// <summary>Link wa.me da cliente com a mensagem pronta (só dígitos, com DDI do Brasil se faltar).</summary>
