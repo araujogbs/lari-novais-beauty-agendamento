@@ -210,5 +210,4 @@ Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e p
 
 ### 📌 Próximos Passos
 - [ ] Corrigir o WhatsApp dos agendamentos de teste antigos (digitados com 55 no lugar do DDD).
-- [ ] Conferir em produção a taxa de deslocamento: o OSRM público respondeu 403 e a taxa pode estar saindo zerada.
 - [ ] Google Calendar com conta de serviço e cópia do backup fora do servidor.
