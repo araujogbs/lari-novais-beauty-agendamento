@@ -12,6 +12,7 @@ import { THEME } from '../../theme';
 import type { BookedSummary, Notify, OpenLightbox, ServiceItem } from '../../types';
 import { brasiliaToUtcIso, formatLongDate, todayISO } from '../../utils/date';
 import { getErrorMessage } from '../../utils/errors';
+import { isValidPhone } from '../../utils/format';
 import { animateLayout } from '../../utils/layoutAnimation';
 import { AddressSection } from './AddressSection';
 import { BookingTicket } from './BookingTicket';
@@ -62,8 +63,8 @@ export function DetailsStep({ services, form, notify, openLightbox, onBack, onBo
       notify('Horário', 'Selecione um horário disponível.');
       return;
     }
-    if (!form.clientName.trim() || form.clientPhone.replace(/\D/g, '').length < 10) {
-      notify('Atenção', 'Preencha o seu nome e um WhatsApp válido.');
+    if (!form.clientName.trim() || !isValidPhone(form.clientPhone)) {
+      notify('Atenção', 'Preencha o seu nome e um WhatsApp válido com DDD, por exemplo (11) 91234-5678.');
       return;
     }
     if (!form.description.trim()) {

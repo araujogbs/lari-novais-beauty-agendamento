@@ -148,6 +148,12 @@ public class AppointmentsController : ControllerBase
     [Consumes("multipart/form-data")]
     public async Task<ActionResult<Appointment>> CreateAppointment([FromForm] CreateAppointmentDto dto)
     {
+        // Um WhatsApp errado (ex.: 55 digitado no lugar do DDD) faz a Lari não conseguir falar com a cliente
+        if (!PhoneNumber.IsValid(dto.ClientPhone))
+        {
+            return BadRequest(new { message = "Informe um WhatsApp válido com DDD, por exemplo (11) 91234-5678." });
+        }
+
         // 0. Validar as imagens de referência antes de qualquer gravação
         var images = dto.Images ?? new List<IFormFile>();
         if (images.Count > MaxImages)
