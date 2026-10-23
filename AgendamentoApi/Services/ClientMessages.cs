@@ -26,8 +26,13 @@ public static class ClientMessages
               (pixCode is null ? ": vou te enviar a chave PIX por aqui. " : $" (copia e cola):\n\n{pixCode}\n\n")
             : " ";
 
-        return $"Olá {name}! O seu agendamento para {service} está confirmado! {details}{deposit}" +
-               $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} " +
+        // Com o PIX na mensagem, avisa que o QR Code do mesmo PIX está no link ("Meus agendamentos" do site)
+        var linkText = depositAmount is > 0 && pixCode is not null
+            ? "Se preferir pagar pelo QR Code do PIX, ele está no seu link, onde você também pode ver ou cancelar " +
+              $"(com mais de 24 h de antecedência): {manageUrl} "
+            : $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} ";
+
+        return $"Olá {name}! O seu agendamento para {service} está confirmado! {details}{deposit}{linkText}" +
                "Com menos de 24 h, é só responder esta mensagem. Até breve!";
     }
 
