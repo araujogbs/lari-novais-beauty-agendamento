@@ -148,6 +148,37 @@ namespace AgendamentoApi.Migrations
                     b.ToTable("Services");
                 });
 
+            modelBuilder.Entity("AgendamentoApi.Models.WebPushSubscription", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Auth")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("P256dh")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Endpoint")
+                        .IsUnique();
+
+                    b.ToTable("WebPushSubscriptions");
+                });
+
             modelBuilder.Entity("AgendamentoApi.Models.Appointment", b =>
                 {
                     b.HasOne("AgendamentoApi.Models.ServiceItem", "ServiceItem")

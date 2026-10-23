@@ -39,6 +39,9 @@ services:
       TravelFee__OriginLongitude: ${TRAVEL_ORIGIN_LONGITUDE:-0}
       WhatsApp__PhoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WhatsApp__AccessToken: ${WHATSAPP_ACCESS_TOKEN:-}
+      # Web Push do painel (chaves VAPID); vazio = sem aviso no navegador
+      Vapid__PublicKey: ${VAPID_PUBLIC_KEY:-}
+      Vapid__PrivateKey: ${VAPID_PRIVATE_KEY:-}
       # Sinal exigido ao aprovar um pedido (percentual do total) e a chave PIX que recebe
       Deposit__Percent: ${DEPOSIT_PERCENT:-30}
       Pix__Key: ${PIX_KEY:-}

@@ -48,6 +48,7 @@ public class AppointmentsController : ControllerBase
     private readonly IDepositService _depositService;
     private readonly IManageTokenService _manageTokens;
     private readonly IPushNotificationService _pushService;
+    private readonly IWebPushService _webPushService;
 
     public AppointmentsController(
         AppDbContext context,
@@ -57,6 +58,7 @@ public class AppointmentsController : ControllerBase
         IDepositService depositService,
         IManageTokenService manageTokens,
         IPushNotificationService pushService,
+        IWebPushService webPushService,
         IWebHostEnvironment env,
         IConfiguration configuration)
     {
@@ -70,6 +72,7 @@ public class AppointmentsController : ControllerBase
         _depositService = depositService;
         _manageTokens = manageTokens;
         _pushService = pushService;
+        _webPushService = webPushService;
     }
 
     private const int MaxServices = 5;
@@ -261,7 +264,8 @@ public class AppointmentsController : ControllerBase
             ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
             _manageTokens.BuildUrl(appointment.Id));
 
-        // Notificação push no app da maquiadora, para ela ver o pedido na hora
+        // Notificação push para a maquiadora ver o pedido na hora: no painel do site (Web Push, funciona no iPhone) e no app
+        await _webPushService.NotifyNewBookingAsync(appointment, serviceNames);
         await _pushService.NotifyNewBookingAsync(appointment, serviceNames);
 
         // Só o id e o código secreto: com ele a cliente acompanha e cancela o pedido (nunca o registro inteiro)

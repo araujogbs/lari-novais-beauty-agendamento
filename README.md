@@ -99,7 +99,7 @@ Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, segu
 
 ### Automações
 - **WhatsApp automático (adiado):** o `WhatsAppService` está pronto para a Cloud API da Meta ("pedido recebido", confirmação, recusa e expiração, com modelos em `deploy/whatsapp-templates.md`), mas **sem credenciais só registra no log**. A Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros, então por ora a Lari envia as mensagens pelo botão do painel. O PIX só existe depois que ela aprova: o sinal é calculado em `/approve` e o `pixCode` só volta para pedidos `Confirmed`.
-- **Push para a maquiadora:** ao entrar um pedido, a API avisa os aparelhos cadastrados pelo serviço de push do Expo.
+- **Push para a maquiadora:** ao entrar um pedido, a API avisa (1) os navegadores cadastrados pelo painel do site, por **Web Push**, que é o que funciona no iPhone, e (2) os aparelhos do app pelo serviço de push do Expo (sem build do app, esse segundo caminho fica sem aparelhos). O envio Web Push usa a `Lib.Net.Http.WebPush` e não o pacote `WebPush`: este envia no formato antigo (`aesgcm`) que a Apple não entrega.
 - Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
@@ -263,6 +263,9 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 | GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data (cada um com `expiresAt`, o prazo para responder) |
 | POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, calcula o sinal, tenta enviar a confirmação por WhatsApp (só simula sem credenciais) e cria o evento no Google Calendar. `409` se não estiver mais em análise |
 | GET | `/appointments/{id}/client-message?reason=` | Admin | Link `wa.me` da cliente com a mensagem pronta: confirmação com sinal e PIX (`Confirmed`) ou recusa com o motivo (`Rejected`). `409` nos outros estados |
+| GET | `/push/web/public-key` | Público | Chave pública VAPID que o navegador usa para assinar o aviso. `503` se o Web Push não estiver configurado |
+| POST | `/push/web/subscribe` | Admin | Body `{ "endpoint": "...", "keys": { "p256dh": "...", "auth": "..." } }`. Cadastra o navegador (só endereços de push da Apple, Google, Mozilla e Microsoft) |
+| POST | `/push/web/unsubscribe` | Admin | Body `{ "endpoint": "..." }`. Tira o navegador |
 | POST | `/push/register` | Admin | Body `{ "token": "ExponentPushToken[...]" }`. Cadastra o aparelho que recebe o aviso de pedido novo (repetir não faz mal) |
 | POST | `/push/unregister` | Admin | Body igual ao anterior. Tira o aparelho (ao sair do painel) |
 | POST | `/appointments/{id}/deposit-paid` | Admin | Marca que o sinal do pedido confirmado foi recebido (`depositPaidAt`). `409` se não estiver confirmado |
@@ -297,6 +300,7 @@ Segredos **não** ficam no repositório. Em desenvolvimento use **User Secrets**
 | `Admin:PasswordHash` | Sim | Hash da senha no formato do ASP.NET Identity (`PasswordHasher`). Nunca a senha em texto |
 | `Deposit:Percent` | Não | Percentual do total cobrado como sinal depois da aprovação (padrão 30) |
 | `Pix:Key` / `Pix:MerchantName` / `Pix:MerchantCity` | Não | Chave PIX que recebe o sinal e nome/cidade que aparecem no pagamento. Sem a chave, não há "copia e cola" |
+| `Vapid:PublicKey` / `Vapid:PrivateKey` | Não | Par de chaves VAPID do aviso de pedido novo no painel do site (Web Push, funciona no iPhone com o painel na Tela de Início). No Docker vêm de `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` no `.env`; a privada é segredo. Sem elas o aviso fica desligado. `Vapid:Subject` (opcional) é o contato enviado ao serviço de push; padrão `Site:Url` |
 | `WhatsApp:PhoneNumberId` / `WhatsApp:AccessToken` | Não | WhatsApp Cloud API oficial (Meta), com modelos aprovados (`deploy/whatsapp-templates.md`). Sem isso, a mensagem só aparece no log (simulação) |
 | `GoogleCalendar:CredentialsJsonPath` / `GoogleCalendar:CalendarId` | Não | Sem isso, o evento só aparece no log (simulação) |
 | `TravelFee:OriginLatitude` / `TravelFee:OriginLongitude` | Sim, para cobrar deslocamento | Coordenadas do ponto de partida da maquiadora. **Dado pessoal: só nos segredos**, nunca no repositório. Sem elas, a taxa não é calculada |

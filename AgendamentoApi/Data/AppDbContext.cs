@@ -20,9 +20,13 @@ public class AppDbContext : DbContext
     // Aparelhos que recebem notificação push quando chega um pedido novo
     public DbSet<PushDevice> PushDevices { get; set; }
 
+    // Navegadores (painel do site) que recebem o aviso por Web Push
+    public DbSet<WebPushSubscription> WebPushSubscriptions { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<PushDevice>().HasIndex(d => d.Token).IsUnique();
+        modelBuilder.Entity<WebPushSubscription>().HasIndex(s => s.Endpoint).IsUnique();
 
         // Agendamentos antigos (anteriores à quantidade de pessoas) valem para 1 pessoa
         modelBuilder.Entity<Appointment>().Property(a => a.People).HasDefaultValue(1);

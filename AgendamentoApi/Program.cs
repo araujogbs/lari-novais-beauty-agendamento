@@ -88,6 +88,7 @@ builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
 builder.Services.AddHttpClient<ITravelFeeService, TravelFeeService>();
 // Timeout curto: o aviso de push não pode atrasar a resposta do agendamento se o Expo estiver lento
 builder.Services.AddHttpClient<IPushNotificationService, PushNotificationService>(c => c.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHttpClient<IWebPushService, WebPushService>(c => c.Timeout = TimeSpan.FromSeconds(8));
 builder.Services.AddScoped<IGoogleCalendarService, GoogleCalendarService>();
 builder.Services.AddSingleton<IDepositService, DepositService>();
 builder.Services.AddSingleton<IManageTokenService, ManageTokenService>();
