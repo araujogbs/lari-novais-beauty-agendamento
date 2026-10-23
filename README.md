@@ -248,7 +248,7 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Autenticação
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| POST | `/auth/login` | Público (5/min por IP) | Body `{ "Username", "Password" }`. Devolve `{ token }` (JWT válido por 2 h). `401` se inválido, `503` se o admin não estiver configurado |
+| POST | `/auth/login` | Público (5/min por IP) | Body `{ "Username", "Password" }`. Devolve `{ token }` (JWT válido por 30 dias, configurável em `Jwt:ExpiryDays`; para derrubar todas as sessões, troque `Jwt:Key`). `401` se inválido, `503` se o admin não estiver configurado |
 
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |

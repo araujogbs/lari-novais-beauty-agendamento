@@ -67,7 +67,9 @@ public class AuthController : ControllerBase
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(claims),
-            Expires = DateTime.UtcNow.AddHours(2),
+            // Sessão longa para a Lari não digitar a senha a cada abertura do painel no celular (Jwt:ExpiryDays, padrão 30).
+            // Um token não pode ser revogado sozinho: para derrubar todas as sessões, troque Jwt:Key.
+            Expires = DateTime.UtcNow.AddDays(Math.Clamp(_configuration.GetValue<int?>("Jwt:ExpiryDays") ?? 30, 1, 90)),
             Issuer = _configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("JWT Issuer not configured"),
             Audience = _configuration["Jwt:Audience"] ?? throw new InvalidOperationException("JWT Audience not configured"),
             SigningCredentials = new SigningCredentials(
