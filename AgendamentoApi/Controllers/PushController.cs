@@ -1,5 +1,5 @@
-using System.ComponentModel.DataAnnotations;
 using AgendamentoApi.Data;
+using AgendamentoApi.DTOs;
 using AgendamentoApi.Models;
 using AgendamentoApi.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -7,36 +7,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgendamentoApi.Controllers;
-
-public class PushTokenDto
-{
-    [Required, StringLength(200)]
-    public string Token { get; set; } = string.Empty;
-}
-
-public class WebPushKeysDto
-{
-    [Required, StringLength(200)]
-    public string P256dh { get; set; } = string.Empty;
-
-    [Required, StringLength(200)]
-    public string Auth { get; set; } = string.Empty;
-}
-
-public class WebPushSubscribeDto
-{
-    [Required, StringLength(1000)]
-    public string Endpoint { get; set; } = string.Empty;
-
-    [Required]
-    public WebPushKeysDto Keys { get; set; } = new();
-}
-
-public class WebPushUnsubscribeDto
-{
-    [Required, StringLength(1000)]
-    public string Endpoint { get; set; } = string.Empty;
-}
 
 /// <summary>Cadastro dos aparelhos e navegadores da maquiadora que recebem notificação push de pedidos novos.</summary>
 [ApiController]

@@ -191,3 +191,24 @@ Pelas migrations e pelo README: endereço do atendimento, autenticação JWT e p
 - [ ] WhatsApp pela API oficial da Meta (de preferência em coexistência com o número atual).
 - [ ] Google Calendar com conta de serviço, apagando o evento quando o agendamento é cancelado.
 - [ ] Cópia do backup fora do servidor e monitoramento (UptimeRobot).
+
+## [2026-10-23] - Mensagem pelo WhatsApp da Lari, avisos no iPhone e painel no celular
+
+### 🛠️ O que foi feito
+- **WhatsApp automático adiado:** a Meta só libera coexistência (manter o app no mesmo número) para parceiros. No lugar, `GET /appointments/{id}/client-message` devolve um link `wa.me` com a mensagem pronta (confirmação com sinal e PIX, ou recusa com motivo) e o painel mostra o botão "Enviar pelo WhatsApp". Mensagens sem emoji: o `�` aparecia porque o emoji se perdia no texto do link.
+- **Aviso de pedido novo por Web Push** (`WebPushService`, `PushController`, tabela `WebPushSubscriptions`), com chaves VAPID no `.env` do servidor. Funciona no iPhone com o painel na Tela de Início. Testado de ponta a ponta com 3 pedidos reais.
+- **Validação de WhatsApp** (`PhoneNumber`): um "55" digitado no lugar do DDD gerava um número que não existe no WhatsApp.
+- **Sessão do painel de 30 dias** (`Jwt:ExpiryDays`) e opção "Manter conectada neste aparelho" no site.
+- **PIX e QR Code somem** quando a Lari marca o sinal como recebido (a tela da cliente se atualiza sozinha).
+- Push do app Expo continua no código, mas o app foi deixado de lado: a Lari usa iPhone.
+- Layout de celular do painel e de "Meus agendamentos" refeito (cartões em coluna, botões de 44 px, campo de data do iOS com altura fixa, aviso no fluxo da página).
+
+### 💡 Aprendizados Técnicos
+- O pacote `WebPush` envia no formato antigo (`aesgcm`), que o serviço de push da Apple descarta sem erro; a `Lib.Net.Http.WebPush` usa `aes128gcm` + `vapid`. A diferença só apareceu ao montar um receptor local para ler o que era enviado.
+- No iOS, remover o app da Tela de Início apaga a permissão e a assinatura de push: é preciso tocar em "Ativar avisos" de novo.
+- `input type="date"` no iOS ignora `height` sem `appearance: none` e pode desmontar a linha em volta; flex com altura explícita resolve.
+
+### 📌 Próximos Passos
+- [ ] Corrigir o WhatsApp dos agendamentos de teste antigos (digitados com 55 no lugar do DDD).
+- [ ] Conferir em produção a taxa de deslocamento: o OSRM público respondeu 403 e a taxa pode estar saindo zerada.
+- [ ] Google Calendar com conta de serviço e cópia do backup fora do servidor.

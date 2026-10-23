@@ -82,8 +82,8 @@ A seguir, a documentação técnica completa: regras de negócio, modelo de dado
 - **Taxa de deslocamento automática:** ao digitar o CEP, o app preenche rua e bairro e mostra a distância até o ateliê e a taxa (ou "deslocamento gratuito"). A taxa é somada ao valor total.
 - **Descrição obrigatória** de como a cliente quer o serviço.
 - **Fotos de referência opcionais:** até 5 imagens (JPG, PNG ou WebP, 5 MB cada), com miniaturas e botão para remover.
-- **Meus Agendamentos:** a cliente digita o WhatsApp, vê os agendamentos futuros ("Em análise" ou "Confirmado") e pode cancelar (pedido em análise a qualquer momento; confirmado com mais de 24 h de antecedência).
-- **Tela de agendamento concluído:** ao confirmar, a cliente vê o resumo e é levada (botão ou automaticamente após 6 s) para "Meus Agendamentos", já com o telefone preenchido.
+- **Meus Agendamentos:** mostra os agendamentos futuros ("Em análise" ou "Confirmado") cujo **código secreto** está guardado no aparelho (feitos ali ou abertos pelo link do WhatsApp), sem busca por telefone. Dá para cancelar (pedido em análise a qualquer momento; confirmado com mais de 24 h de antecedência). Com sinal a pagar, mostra o PIX copia e cola e o QR Code, que somem quando a Lari marca o sinal como recebido.
+- **Tela de agendamento concluído:** ao confirmar, a cliente vê o resumo e é levada (botão ou automaticamente após 6 s) para "Meus Agendamentos", já com o agendamento à vista.
 
 ### Maquiadora (Painel Ateliê)
 Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha). O mesmo painel existe no site, em `/#painel` (veja o README do Site).
@@ -111,18 +111,24 @@ API e App/
 ├── AgendamentoApi/                  # Backend .NET
 │   ├── Controllers/
 │   │   ├── AppointmentsController.cs  # Agendamentos, horários, bloqueios, fotos, "meus agendamentos"
-│   │   ├── AuthController.cs          # Login do administrador (JWT)
+│   │   ├── AuthController.cs          # Login do administrador (JWT, sessão de 30 dias)
+│   │   ├── PushController.cs          # Cadastro de aparelhos/navegadores para avisos de pedido novo
 │   │   └── ServicesController.cs      # Catálogo de serviços
 │   ├── Data/AppDbContext.cs
 │   ├── DTOs/
 │   │   ├── CreateAppointmentDto.cs    # Criação (multipart: dados + imagens)
 │   │   ├── BlockSlotDto.cs            # Bloqueio de agenda
 │   │   ├── RejectAppointmentDto.cs    # Motivo opcional da recusa
-│   │   └── MyAppointmentDto.cs        # Resposta enxuta da cliente + ClientCancelDto
+│   │   ├── MyAppointmentDto.cs        # Resposta enxuta da cliente + ClientCancelDto
+│   │   └── PushDtos.cs                # Token do Expo e assinatura Web Push
 │   ├── Models/                        # Appointment, ServiceItem, AppointmentStatus (status e prazo de 3 dias)
 │   ├── Services/
 │   │   ├── TravelFeeService.cs        # CEP -> distância -> taxa de deslocamento
 │   │   ├── WhatsAppService.cs         # Mensagens por WhatsApp (interface + implementação)
+│   │   ├── ClientMessages.cs          # Textos e links wa.me (confirmação com PIX, recusa) enviados pelo WhatsApp da Lari
+│   │   ├── WebPushService.cs          # Aviso de pedido novo no painel do site (Web Push, funciona no iPhone)
+│   │   ├── PushNotificationService.cs # Aviso de pedido novo no app (Expo)
+│   │   ├── PhoneNumber.cs             # Validação de telefone brasileiro com DDD
 │   │   ├── GoogleCalendarService.cs   # Evento no Google Calendar (interface + implementação)
 │   │   ├── PendingExpirationService.cs # Tarefa em segundo plano que expira pedidos sem resposta
 │   │   └── BrazilTime.cs              # Fuso de Brasília
@@ -144,7 +150,7 @@ API e App/
         │   │   ├── DetailsStep.tsx        # Etapa 2: dia, horário, dados e confirmação
         │   │   └── PeopleSelector · AddressSection · DescriptionSection · BookingTicket
         │   ├── SuccessScreen.tsx        # Agendamento concluído
-        │   ├── MyAppointmentsScreen.tsx # Consulta e cancelamento pelo WhatsApp
+        │   ├── MyAppointmentsScreen.tsx # Consulta e cancelamento pelo código guardado no aparelho
         │   ├── AdminLoginScreen.tsx     # Login da maquiadora
         │   └── admin/                   # Painel Ateliê
         │       ├── AdminScreen.tsx        # Pedidos em análise e agenda do dia
@@ -415,11 +421,11 @@ Já implementado:
 - Senha do admin guardada como **hash** (ASP.NET Identity), com comparação em tempo constante; a API recusa subir sem `Jwt:Key` forte.
 - Upload de imagens validado por conteúdo, com limite de quantidade e tamanho. Os nomes são gerados no servidor, o que evita *path traversal*.
 - Fotos das clientes só são servidas por rota autenticada.
-- Cancelamento pela cliente devolve a **mesma resposta** para "não existe" e "telefone não confere", sem revelar agendamentos de terceiros.
+- Cancelamento pela cliente devolve a **mesma resposta** para "não existe" e "código não confere", sem revelar agendamentos de terceiros.
 - O app não registra senhas nem tokens nos logs.
 - Segredos e dados pessoais fora do Git (User Secrets e variáveis de ambiente): conexão do banco, chave JWT, login do painel e ponto de partida da maquiadora.
 - `POST /api/services` exige papel `Admin`; o `Id` enviado pelo cliente é ignorado.
-- **Limite de requisições por IP** (`429`): login 5/min, consulta e cancelamento de agendamentos 10/min, criação de agendamentos 10 a cada 10 min. Dificulta força bruta de senha e a descoberta de telefones.
+- **Limite de requisições por IP** (`429`): login 5/min, consulta e cancelamento de agendamentos 10/min, criação de agendamentos 10 a cada 10 min. Dificulta força bruta de senha e de códigos.
 - **CORS restrito:** em produção só as origens de `Cors:AllowedOrigins`; liberado geral apenas em desenvolvimento, e só com os métodos e headers necessários.
 - **HTTPS forçado em produção** (redirecionamento + HSTS) e headers `X-Content-Type-Options: nosniff` e `X-Frame-Options: DENY`.
 - **Atrás do proxy reverso** (fora de desenvolvimento), a API lê `X-Forwarded-For` e `X-Forwarded-Proto`, então o limite por IP vale por cliente, e não para todo mundo junto com o IP do proxy. Isso só é seguro porque a porta da API não é exposta fora da rede do Docker.
@@ -428,8 +434,8 @@ Já implementado:
 
 ## Limitações conhecidas e próximos passos
 
-- **"Meus Agendamentos" usa só o telefone como prova de identidade.** O limite por IP dificulta, mas não impede, que alguém que saiba o WhatsApp de uma cliente veja e cancele os agendamentos dela. Para endurecer de vez: código de verificação por SMS/WhatsApp.
-- **WhatsApp e Google Calendar ainda em simulação em produção** (as mensagens e os eventos só aparecem no log). O `WhatsAppService` envia no formato da Evolution API **v1** (`textMessage: { text }`). O plano é usar a **API oficial da Meta** (Cloud API, com modelos de mensagem aprovados), de preferência em coexistência com o WhatsApp Business do número atual.
+- **O código de "Meus Agendamentos" vale por aparelho.** Em outro aparelho (ou depois de limpar o navegador), a cliente só reencontra o pedido pelo link que recebe no WhatsApp ou falando com a Lari. Quem só sabe o telefone de alguém não vê nada.
+- **WhatsApp automático e Google Calendar ainda em simulação em produção** (as mensagens e os eventos só aparecem no log). O WhatsApp automático foi **adiado**: a Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros. Hoje a Lari envia a confirmação, o PIX e a recusa pelo botão "Enviar pelo WhatsApp" do painel. O `WhatsAppService` já está pronto para a Cloud API oficial, para quando houver credenciais.
 - **Backup só no próprio servidor.** Falta copiar `deploy/backups/` para fora (ex.: `rclone` para Backblaze B2 ou Google Drive).
 - **A janela de 3 meses do calendário existe só no site.** A API ainda aceita pedidos para qualquer data futura enviados direto.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
@@ -440,4 +446,5 @@ Já implementado:
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.
 - `GoogleCalendarService` usa `GoogleCredential.FromStream`, marcado como obsoleto pelo Google (aviso `CS0618` no build); migrar para `CredentialFactory` ao ligar a integração de verdade.
 - **Notificação push só funciona num build do app**, nunca no Expo Go do Android (o Expo removeu o push remoto lá no SDK 53). Falta, uma vez: `eas init` (grava o `projectId` em `app.json`), subir a credencial **FCM V1** do Firebase no EAS (`eas credentials`) e gerar um build novo (`eas build --profile preview --platform android`). Sem o `projectId` o app simplesmente não cadastra o aparelho. Para iOS é preciso conta Apple Developer paga.
-- Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel, push também para o painel do site.
+- **O app Expo não é o caminho principal.** A Lari usa iPhone e, sem conta Apple Developer paga, o app não instala nem recebe push. O painel do site instalado na Tela de Início (com Web Push) faz o mesmo papel e está em produção. O código do app continua no repositório.
+- Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel.
