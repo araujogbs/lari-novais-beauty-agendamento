@@ -77,6 +77,14 @@ export const approveAppointment = (id: number) => api.post(`/appointments/${id}/
 export const rejectAppointment = (id: number, reason?: string) =>
   api.post(`/appointments/${id}/reject`, { reason: reason?.trim() || undefined });
 
+/**
+ * Link do WhatsApp da cliente com a mensagem pronta: confirmação (com sinal e PIX) para pedido confirmado,
+ * ou aviso de recusa (com o motivo) para pedido recusado. A conversa abre no WhatsApp da própria maquiadora.
+ */
+export const getClientMessageUrl = async (id: number, reason?: string) =>
+  (await api.get<{ url: string }>(`/appointments/${id}/client-message`, { params: { reason: reason?.trim() || undefined } }))
+    .data.url;
+
 /** Marca que o sinal do pedido confirmado foi recebido. */
 export const markDepositPaid = (id: number) => api.post(`/appointments/${id}/deposit-paid`);
 

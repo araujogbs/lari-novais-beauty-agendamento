@@ -47,6 +47,7 @@ public class AppointmentsController : ControllerBase
     private readonly ITravelFeeService _travelFeeService;
     private readonly IDepositService _depositService;
     private readonly IManageTokenService _manageTokens;
+    private readonly IPushNotificationService _pushService;
 
     public AppointmentsController(
         AppDbContext context,
@@ -55,6 +56,7 @@ public class AppointmentsController : ControllerBase
         ITravelFeeService travelFeeService,
         IDepositService depositService,
         IManageTokenService manageTokens,
+        IPushNotificationService pushService,
         IWebHostEnvironment env,
         IConfiguration configuration)
     {
@@ -67,6 +69,7 @@ public class AppointmentsController : ControllerBase
         _travelFeeService = travelFeeService;
         _depositService = depositService;
         _manageTokens = manageTokens;
+        _pushService = pushService;
     }
 
     private const int MaxServices = 5;
@@ -252,6 +255,9 @@ public class AppointmentsController : ControllerBase
             ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
             _manageTokens.BuildUrl(appointment.Id));
 
+        // Notificação push no app da maquiadora, para ela ver o pedido na hora
+        await _pushService.NotifyNewBookingAsync(appointment, serviceNames);
+
         // Só o id e o código secreto: com ele a cliente acompanha e cancela o pedido (nunca o registro inteiro)
         return StatusCode(StatusCodes.Status201Created,
             new { id = appointment.Id, manageToken = _manageTokens.Create(appointment.Id) });
@@ -323,6 +329,34 @@ public class AppointmentsController : ControllerBase
             ToBrazil(appointment.StartTime), dto?.Reason);
 
         return Ok(appointment);
+    }
+
+    // GET: api/appointments/5/client-message?reason=... (link do WhatsApp da cliente com a mensagem pronta)
+    // Confirmado: confirmação com o sinal e o PIX (ou só o aviso de sinal recebido). Recusado: o motivo vai em "reason".
+    // A conversa abre no WhatsApp da própria maquiadora, então a mensagem sai do número dela.
+    [HttpGet("{id}/client-message")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetClientMessage(int id, [FromQuery] string? reason)
+    {
+        var a = await _context.Appointments.Include(x => x.ServiceItem).FirstOrDefaultAsync(x => x.Id == id);
+        if (a == null)
+            return NotFound(new { message = "Agendamento não encontrado." });
+
+        var start = ToBrazil(a.StartTime);
+        var text = a.Status switch
+        {
+            AppointmentStatus.Confirmed => ClientMessages.Confirmation(
+                a.ClientName, ServiceLabel(a), start, ToBrazil(a.EndTime),
+                a.DepositAmount, a.DepositPaidAt != null,
+                a.DepositAmount is > 0 ? _depositService.BuildPixCode(a.Id, a.DepositAmount.Value) : null,
+                _manageTokens.BuildUrl(a.Id)),
+            AppointmentStatus.Rejected => ClientMessages.Rejection(a.ClientName, ServiceLabel(a), start, reason),
+            _ => null
+        };
+        if (text == null)
+            return Conflict(new { message = "Só pedidos confirmados ou recusados têm mensagem para a cliente." });
+
+        return Ok(new { url = ClientMessages.WhatsAppUrl(a.ClientPhone, text) });
     }
 
     // Tira o pedido de "em análise" só se ele ainda estiver assim no banco (UPDATE ... WHERE Status = 'Pending').

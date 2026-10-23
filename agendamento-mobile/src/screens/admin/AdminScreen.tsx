@@ -1,16 +1,18 @@
-import React, { useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { FlatList, Linking, StyleSheet, Text, View } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { SkeletonList } from '../../components/Skeleton';
 import {
   approveAppointment,
   cancelAppointment,
   getAdminAppointments,
+  getClientMessageUrl,
   getPendingAppointments,
   markDepositPaid,
   rejectAppointment,
 } from '../../services/appointments';
 import { authService } from '../../services/auth';
+import { listenToPushEvents, registerForPushNotifications } from '../../services/pushNotifications';
 import { common } from '../../styles/common';
 import { THEME } from '../../theme';
 import type { AppointmentItem, Notify, OpenLightbox } from '../../types';
@@ -62,6 +64,12 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
     }
   };
 
+  // O aviso push chama a versão mais recente de `load`, com o dia que está na tela
+  const refresh = useRef<() => void>(() => {});
+  useEffect(() => {
+    refresh.current = () => load(date);
+  });
+
   useEffect(() => {
     (async () => {
       if (!(await authService.isAuthenticated())) {
@@ -69,9 +77,26 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
         return;
       }
       load(date);
+
+      // Cadastra este aparelho para receber o aviso de pedido novo
+      const push = await registerForPushNotifications();
+      if (push === 'denied') {
+        notify('Atenção', 'Sem a permissão de notificações você não é avisada dos pedidos novos. Ative nas configurações do celular.', 'warn');
+      }
     })();
+    // Pedido novo com o app aberto (ou toque no aviso): recarrega a lista na hora
+    return listenToPushEvents(() => refresh.current());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Abre o WhatsApp da Lari na conversa com a cliente, com a mensagem pronta (confirmação com PIX, ou recusa). */
+  const openClientMessage = async (id: number, reason?: string) => {
+    try {
+      await Linking.openURL(await getClientMessageUrl(id, reason));
+    } catch {
+      notify('Atenção', 'Não foi possível abrir o WhatsApp. Use "Enviar confirmação" no atendimento.', 'warn');
+    }
+  };
 
   const handleCancel = async (id: number) => {
     try {
@@ -86,8 +111,9 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
   const handleApprove = async (id: number) => {
     try {
       await approveAppointment(id);
-      notify('Agendamento confirmado', 'A cliente recebe a confirmação, com o PIX do sinal, pelo WhatsApp.', 'success');
+      notify('Agendamento confirmado', 'Envie a confirmação, com o PIX do sinal, para a cliente pelo WhatsApp.', 'success');
       await load(date);
+      await openClientMessage(id);
     } catch (error: any) {
       if (!(await handleAuthError(error))) {
         notify('Erro', getErrorMessage(error, 'Não foi possível aprovar o pedido.'));
@@ -111,8 +137,9 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
   const handleReject = async (id: number, reason: string) => {
     try {
       await rejectAppointment(id, reason);
-      notify('Pedido recusado', 'O horário foi liberado e a cliente será avisada pelo WhatsApp.', 'warn');
+      notify('Pedido recusado', 'O horário foi liberado. Avise a cliente pelo WhatsApp.', 'warn');
       await load(date);
+      await openClientMessage(id, reason);
     } catch (error: any) {
       if (!(await handleAuthError(error))) {
         notify('Erro', getErrorMessage(error, 'Não foi possível recusar o pedido.'));
@@ -132,6 +159,7 @@ export function AdminScreen({ notify, openLightbox, onSessionExpired }: Props) {
       onApprove={handleApprove}
       onReject={handleReject}
       onDepositPaid={handleDepositPaid}
+      onSendMessage={openClientMessage}
       showDate={showDate}
     />
   );

@@ -13,6 +13,7 @@ import { MyAppointmentsScreen } from './src/screens/MyAppointmentsScreen';
 import { SuccessScreen } from './src/screens/SuccessScreen';
 import { WelcomeScreen } from './src/screens/WelcomeScreen';
 import { authService } from './src/services/auth';
+import { unregisterPushNotifications } from './src/services/pushNotifications';
 import { THEME } from './src/theme';
 import type { BookedSummary, LightboxSource, ViewMode } from './src/types';
 
@@ -33,6 +34,7 @@ export default function App() {
   };
 
   const logoutAdmin = async () => {
+    await unregisterPushNotifications(); // precisa do login ainda válido
     await authService.removeToken();
     setViewMode('welcome');
   };

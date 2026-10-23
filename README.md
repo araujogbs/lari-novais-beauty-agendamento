@@ -89,14 +89,17 @@ A seguir, a documentação técnica completa: regras de negócio, modelo de dado
 Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, seguido de login (usuário e senha). O mesmo painel existe no site, em `/#painel` (veja o README do Site).
 - **Pedidos em análise** no topo do painel (de qualquer data), com **Aprovar** e **Recusar** (com motivo opcional) e o prazo para responder (3 dias; depois o pedido expira sozinho). Só depois de aprovar a cliente recebe a confirmação e o evento vai para o Google Calendar.
 - Lista de atendimentos por dia, com serviço, horário, WhatsApp, endereço, descrição do pedido e **fotos de referência**.
-- **Atalho do WhatsApp:** abre a conversa com uma mensagem de confirmação pronta.
+- **Mensagem pelo WhatsApp da própria Lari:** ao **aprovar**, o app abre a conversa com a cliente com a confirmação pronta (data, horário, sinal, PIX copia e cola e o link do agendamento); ao **recusar**, abre o aviso com o motivo. Os atendimentos confirmados têm o botão **Enviar PIX** / **Enviar confirmação** para reenviar. A mensagem sai do número dela, então não precisa de API da Meta. No site, o aviso depois de aprovar/recusar traz o botão "Enviar pelo WhatsApp".
+- **Notificação push** no app quando chega um pedido novo (veja "Notificações push"). Com o app aberto, a lista atualiza na hora.
+- **Atalho do WhatsApp:** abre a conversa com a cliente com um texto genérico (para atendimentos já confirmados ou em análise).
 - **Atalho do mapa:** abre o endereço no Google Maps (só aparece se houver endereço).
 - **Desmarcar** um atendimento confirmado.
 - **Bloquear agenda** (dia inteiro ou intervalo de horas, com motivo) e **desbloquear**.
 - Sessão por JWT; ao expirar, o app volta para o login.
 
 ### Automações
-- **WhatsApp** em cada etapa: "pedido recebido, em análise" ao agendar; confirmação ao aprovar; aviso (com o motivo) ao recusar; aviso quando o pedido expira sem resposta. A maquiadora vê os pedidos novos no Painel Ateliê.
+- **WhatsApp automático (adiado):** o `WhatsAppService` está pronto para a Cloud API da Meta ("pedido recebido", confirmação, recusa e expiração, com modelos em `deploy/whatsapp-templates.md`), mas **sem credenciais só registra no log**. A Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros, então por ora a Lari envia as mensagens pelo botão do painel. O PIX só existe depois que ela aprova: o sinal é calculado em `/approve` e o `pixCode` só volta para pedidos `Confirmed`.
+- **Push para a maquiadora:** ao entrar um pedido, a API avisa os aparelhos cadastrados pelo serviço de push do Expo.
 - Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
 
 ---
@@ -258,7 +261,10 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "token": "..." }`. Cancela se o código bater: pedido em análise a qualquer momento, confirmado só com mais de 24 h |
 | GET | `/appointments?date=AAAA-MM-DD` | Admin | Lista os agendamentos do dia (inclui bloqueios) |
 | GET | `/appointments/pending` | Admin | Pedidos futuros em análise, de qualquer data (cada um com `expiresAt`, o prazo para responder) |
-| POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, envia a confirmação por WhatsApp e cria o evento no Google Calendar. `409` se não estiver mais em análise |
+| POST | `/appointments/{id}/approve` | Admin | Aprova um pedido em análise: vira `Confirmed`, calcula o sinal, tenta enviar a confirmação por WhatsApp (só simula sem credenciais) e cria o evento no Google Calendar. `409` se não estiver mais em análise |
+| GET | `/appointments/{id}/client-message?reason=` | Admin | Link `wa.me` da cliente com a mensagem pronta: confirmação com sinal e PIX (`Confirmed`) ou recusa com o motivo (`Rejected`). `409` nos outros estados |
+| POST | `/push/register` | Admin | Body `{ "token": "ExponentPushToken[...]" }`. Cadastra o aparelho que recebe o aviso de pedido novo (repetir não faz mal) |
+| POST | `/push/unregister` | Admin | Body igual ao anterior. Tira o aparelho (ao sair do painel) |
 | POST | `/appointments/{id}/deposit-paid` | Admin | Marca que o sinal do pedido confirmado foi recebido (`depositPaidAt`). `409` se não estiver confirmado |
 | POST | `/appointments/{id}/reject` | Admin | Recusa um pedido em análise (body opcional `{ "reason": "..." }`): vira `Rejected`, libera o horário e avisa a cliente. `409` se não estiver mais em análise |
 | PATCH | `/appointments/{id}/status` | Admin | Desmarca um atendimento ou desfaz um bloqueio. Só aceita `"Cancelled"` (string JSON) |
@@ -429,4 +435,5 @@ Já implementado:
 - A criação de agendamento (`POST /appointments`) ainda não recusa um `startTime` no passado; só as listas de horários deixaram de oferecê-los.
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.
 - `GoogleCalendarService` usa `GoogleCredential.FromStream`, marcado como obsoleto pelo Google (aviso `CS0618` no build); migrar para `CredentialFactory` ao ligar a integração de verdade.
-- Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel, notificações push para a maquiadora.
+- **Notificação push só funciona num build do app**, nunca no Expo Go do Android (o Expo removeu o push remoto lá no SDK 53). Falta, uma vez: `eas init` (grava o `projectId` em `app.json`), subir a credencial **FCM V1** do Firebase no EAS (`eas credentials`) e gerar um build novo (`eas build --profile preview --platform android`). Sem o `projectId` o app simplesmente não cadastra o aparelho. Para iOS é preciso conta Apple Developer paga.
+- Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel, push também para o painel do site.

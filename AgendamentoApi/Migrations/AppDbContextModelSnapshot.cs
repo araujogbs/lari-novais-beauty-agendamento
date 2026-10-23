@@ -99,6 +99,29 @@ namespace AgendamentoApi.Migrations
                     b.ToTable("Appointments");
                 });
 
+            modelBuilder.Entity("AgendamentoApi.Models.PushDevice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Token")
+                        .IsUnique();
+
+                    b.ToTable("PushDevices");
+                });
+
             modelBuilder.Entity("AgendamentoApi.Models.ServiceItem", b =>
                 {
                     b.Property<int>("Id")

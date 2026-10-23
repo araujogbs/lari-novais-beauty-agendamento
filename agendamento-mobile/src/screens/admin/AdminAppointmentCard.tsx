@@ -20,6 +20,8 @@ interface Props {
   onApprove: (id: number) => Promise<void>;
   onReject: (id: number, reason: string) => Promise<void>;
   onDepositPaid: (id: number) => Promise<void>;
+  /** Abre o WhatsApp da cliente com a confirmação (e o PIX) pronta para enviar. */
+  onSendMessage: (id: number) => Promise<void>;
   /** Mostra a data junto do horário (na lista de pedidos em análise, que mistura dias). */
   showDate?: boolean;
 }
@@ -43,6 +45,7 @@ export function AdminAppointmentCard({
   onApprove,
   onReject,
   onDepositPaid,
+  onSendMessage,
   showDate,
 }: Props) {
   const [rejecting, setRejecting] = useState(false);
@@ -127,22 +130,32 @@ export function AdminAppointmentCard({
           </Text>
         ) : null}
 
-        {owesDeposit && (
+        {item.status === 'Confirmed' && (
           <View style={styles.decisionRow}>
             <TouchableOpacity
-              style={[styles.decisionBtn, styles.approveBtn]}
+              style={[styles.decisionBtn, styles.neutralBtn]}
               disabled={busy}
-              onPress={() => run(() => onDepositPaid(item.id))}
+              onPress={() => run(() => onSendMessage(item.id))}
             >
-              {busy ? (
-                <ActivityIndicator size="small" color={THEME.white} />
-              ) : (
-                <>
-                  <Ionicons name="cash-outline" size={16} color={THEME.white} />
-                  <Text style={styles.approveText}>Sinal recebido</Text>
-                </>
-              )}
+              <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
+              <Text style={styles.neutralText}>{owesDeposit ? 'Enviar PIX' : 'Enviar confirmação'}</Text>
             </TouchableOpacity>
+            {owesDeposit && (
+              <TouchableOpacity
+                style={[styles.decisionBtn, styles.approveBtn]}
+                disabled={busy}
+                onPress={() => run(() => onDepositPaid(item.id))}
+              >
+                {busy ? (
+                  <ActivityIndicator size="small" color={THEME.white} />
+                ) : (
+                  <>
+                    <Ionicons name="cash-outline" size={16} color={THEME.white} />
+                    <Text style={styles.approveText}>Sinal recebido</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         )}
 

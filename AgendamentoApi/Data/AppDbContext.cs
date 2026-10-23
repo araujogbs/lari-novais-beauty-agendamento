@@ -17,8 +17,13 @@ public class AppDbContext : DbContext
 // Nova tabela de agendamentos
     public DbSet<Appointment> Appointments { get; set; }
 
+    // Aparelhos que recebem notificação push quando chega um pedido novo
+    public DbSet<PushDevice> PushDevices { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<PushDevice>().HasIndex(d => d.Token).IsUnique();
+
         // Agendamentos antigos (anteriores à quantidade de pessoas) valem para 1 pessoa
         modelBuilder.Entity<Appointment>().Property(a => a.People).HasDefaultValue(1);
     }
