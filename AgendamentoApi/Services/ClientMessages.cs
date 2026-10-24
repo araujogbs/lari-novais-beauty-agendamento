@@ -15,24 +15,29 @@ public static class ClientMessages
         string name, string service, DateTime start, DateTime end,
         decimal? depositAmount, bool depositPaid, string? pixCode, string manageUrl)
     {
-        var details = $"Data: {start:dd/MM/yyyy}. Início do atendimento: {start:HH:mm}, término previsto: {end:HH:mm}.";
+        // Vários clientes no pedido: um por linha ("Cliente 1: ...")
+        var services = service.Contains("; ")
+            ? "Serviços:\n" + service.Replace("; ", "\n")
+            : $"Serviço: {service}";
+        var details = $"{services}\nData: {start:dd/MM/yyyy}\nInício do atendimento: {start:HH:mm}\nTérmino previsto: {end:HH:mm}";
 
+        // O link fica sozinho numa linha: é assim que o WhatsApp mostra a prévia (foto e título do site)
         if (depositPaid)
-            return $"Olá {name}! Recebi o seu sinal, o seu agendamento para {service} está garantido. {details} " +
-                   $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} Até breve!";
+            return $"Olá {name}! Recebi o seu sinal, o seu agendamento está garantido.\n\n{details}\n\n" +
+                   $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link:\n{manageUrl}\n\nAté breve!";
 
         // O PIX (QR Code e copia e cola) fica no link ("Meus agendamentos" do site), não na mensagem
         var deposit = depositAmount is > 0
-            ? $" Para garantir o horário, faça o sinal de {depositAmount.Value.ToString("C2", PtBr)} por PIX" +
-              (pixCode is null ? ": vou te enviar a chave PIX por aqui. " : ". ")
-            : " ";
+            ? $"Para garantir o horário, faça o sinal de {depositAmount.Value.ToString("C2", PtBr)} por PIX. " +
+              (pixCode is null ? "Vou te enviar a chave PIX por aqui.\n\n" : "")
+            : "";
 
         var linkText = depositAmount is > 0 && pixCode is not null
             ? "O QR Code e o PIX copia e cola estão no seu link, onde você também pode ver ou cancelar " +
-              $"(com mais de 24 h de antecedência): {manageUrl} "
-            : $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} ";
+              $"(com mais de 24 h de antecedência):\n{manageUrl}"
+            : $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link:\n{manageUrl}";
 
-        return $"Olá {name}! O seu agendamento para {service} está confirmado! {details}{deposit}{linkText}" +
+        return $"Olá {name}! O seu agendamento está confirmado!\n\n{details}\n\n{deposit}{linkText}\n\n" +
                "Com menos de 24 h, é só responder esta mensagem. Até breve!";
     }
 
