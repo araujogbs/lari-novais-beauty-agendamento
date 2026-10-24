@@ -25,6 +25,10 @@ public class CreateAppointmentDto
     // Um ou mais serviços (o valor e a duração somam)
     public List<int>? ServiceItemIds { get; set; }
 
+    // Serviços de cada pessoa: um item por pessoa, ids separados por vírgula (ex.: "1,2" e "2").
+    // Quando informado, vale no lugar de ServiceItemIds x People.
+    public List<string>? PersonServices { get; set; }
+
     // Compatibilidade com clientes antigos que enviam um serviço só
     public int ServiceItemId { get; set; }
 

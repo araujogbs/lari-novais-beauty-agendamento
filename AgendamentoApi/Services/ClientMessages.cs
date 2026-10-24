@@ -21,14 +21,14 @@ public static class ClientMessages
             return $"Olá {name}! Recebi o seu sinal, o seu agendamento para {service} está garantido. {details} " +
                    $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} Até breve!";
 
+        // O PIX (QR Code e copia e cola) fica no link ("Meus agendamentos" do site), não na mensagem
         var deposit = depositAmount is > 0
             ? $" Para garantir o horário, faça o sinal de {depositAmount.Value.ToString("C2", PtBr)} por PIX" +
-              (pixCode is null ? ": vou te enviar a chave PIX por aqui. " : $" (copia e cola):\n\n{pixCode}\n\n")
+              (pixCode is null ? ": vou te enviar a chave PIX por aqui. " : ". ")
             : " ";
 
-        // Com o PIX na mensagem, avisa que o QR Code do mesmo PIX está no link ("Meus agendamentos" do site)
         var linkText = depositAmount is > 0 && pixCode is not null
-            ? "Se preferir pagar pelo QR Code do PIX, ele está no seu link, onde você também pode ver ou cancelar " +
+            ? "O QR Code e o PIX copia e cola estão no seu link, onde você também pode ver ou cancelar " +
               $"(com mais de 24 h de antecedência): {manageUrl} "
             : $"Para ver ou cancelar (com mais de 24 h de antecedência), use o seu link: {manageUrl} ";
 

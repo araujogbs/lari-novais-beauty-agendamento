@@ -6,6 +6,7 @@ SELECT v.name, v.duration, v.price, TRUE
 FROM (VALUES
     ('Maquiagem', 60, 380.00),
     ('Penteado', 90, 380.00),
+    ('Maquiagem + Penteado', 150, 700.00),
     ('Escova e Babyliss', 60, 300.00)
 ) AS v(name, duration, price)
 WHERE NOT EXISTS (SELECT 1 FROM "Services" s WHERE s."Name" = v.name);
