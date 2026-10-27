@@ -94,6 +94,7 @@ builder.Services.AddSingleton<IDepositService, DepositService>();
 builder.Services.AddSingleton<IManageTokenService, ManageTokenService>();
 // Expira pedidos em análise sem resposta em 3 dias (veja AppointmentStatus.PendingExpiration)
 builder.Services.AddHostedService<PendingExpirationService>();
+builder.Services.AddHostedService<RecurringBlockService>();
 
 var app = builder.Build();
 
