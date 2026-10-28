@@ -131,6 +131,7 @@ API e App/
 │   │   ├── PhoneNumber.cs             # Validação de telefone brasileiro com DDD
 │   │   ├── GoogleCalendarService.cs   # Evento no Google Calendar (interface + implementação)
 │   │   ├── PendingExpirationService.cs # Tarefa em segundo plano que expira pedidos sem resposta
+│   │   ├── RecurringBlockService.cs   # Bloqueio fixo "Docente Senac" (seg a sáb, 06:00-14:00)
 │   │   └── BrazilTime.cs              # Fuso de Brasília
 │   ├── Migrations/                    # Histórico do banco
 │   ├── uploads/                       # Fotos enviadas (criada em runtime, fora do Git)
@@ -174,7 +175,8 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 
 ## Regras de negócio
 
-- **Expediente:** 06:00 às 22:00, fuso de Brasília (`America/Sao_Paulo`). Tudo é gravado em **UTC** no banco e convertido na entrada e na saída.
+- **Expediente:** 06:00 às 22:00, fuso de Brasília (`America/Sao_Paulo`). Tudo é gravado em **UTC** no banco e convertido na entrada e na saída. Horários especiais (22h às 5h) não entram no site: são combinados pelo WhatsApp.
+- **Bloqueio fixo "Docente Senac":** o `RecurringBlockService` roda ao subir a API e a cada 6 h e mantém, nos próximos 100 dias, um bloqueio (`Blocked`, `[BLOQUEIO] Docente Senac`) de segunda a sábado, das 06:00 às 14:00. São bloqueios comuns: aparecem no painel e a maquiadora libera uma manhã com "Desbloquear". O bloqueio liberado fica `Cancelled` e **não é recriado**; dias que já têm algo marcado na manhã são pulados. Para acabar com a regra, remova o `AddHostedService<RecurringBlockService>()` do `Program.cs` e cancele os bloqueios futuros.
 - **Sem sobreposição de horários.** A regra é garantida em duas camadas:
   1. consulta no código (`InicioNovo < FimExistente` e `FimNovo > InicioExistente`);
   2. **constraint de exclusão do PostgreSQL** (`no_overlapping_appointments`, índice GiST com `tstzrange`), que impede conflito mesmo com duas marcações simultâneas. Nesse caso a API responde `409`.
@@ -182,7 +184,7 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 - **Prazo de 3 dias** (`AppointmentStatus.PendingExpiration`): o `PendingExpirationService` roda ao subir a API e a cada 30 min, e passa para `Expired` os pedidos em análise criados há mais de 3 dias ou cujo horário já passou. O horário é liberado e a cliente recebe um aviso pelo WhatsApp. O painel mostra o prazo de cada pedido (`expiresAt`).
 - Agendamentos **cancelados**, **recusados** e **expirados** não ocupam horário (lista `AppointmentStatus.FreeSlot`, a mesma da constraint do banco).
 - **Bloqueios** são gravados como agendamentos de status `Blocked`, então os horários somem da lista de livres automaticamente. Só é possível bloquear onde não há agendamento.
-- **A cliente escolhe o horário de início** (`startTime`). O servidor calcula o término somando a duração total: `término = startTime + duração do serviço × pessoas`. O atendimento inteiro precisa caber no expediente (se o término passar das 22:00, a API responde `400`). Os horários livres já vêm filtrados para isso.
+- **A cliente escolhe o horário de início** (`startTime`). O servidor calcula o término somando a duração total: `término = startTime + soma das durações dos serviços de todas as clientes`. O atendimento inteiro precisa caber no expediente (se o término passar das 22:00, a API responde `400`). Os horários livres já vêm filtrados para isso.
 - **Quantidade de pessoas (`People`):** o valor do serviço e a duração são multiplicados pelo número de pessoas; a taxa de deslocamento não.
 - **Descrição** é obrigatória (até 1000 caracteres); **fotos** são opcionais (máx. 5, 5 MB cada).
 - **Cancelamento pela cliente:** pedido em análise pode ser cancelado a qualquer momento; confirmado, só com **mais de 24 h** de antecedência. Com menos, a API devolve `400` orientando a cancelar pelo WhatsApp.
@@ -226,7 +228,7 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 | Status | string | `Pending`, `Confirmed`, `Rejected`, `Expired`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados) e `AdicionarStatusExpirado` (e os expirados).
+**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados), `AdicionarStatusExpirado` (e os expirados), `SinalEVariosServicos`, `AdicionarAparelhosPush`, `AdicionarAssinaturasWebPush` e `ReativarPacoteMaquiagemPenteado`.
 
 A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social, os mesmos mostrados no site:
 
@@ -235,8 +237,11 @@ A migration `AtualizarServicosSocial` atualiza preços e durações dos serviço
 | Maquiagem | 60 min | R$ 380 |
 | Penteado | 90 min | R$ 380 |
 | Escova e Babyliss | 60 min | R$ 300 |
+| Maquiagem + Penteado (pacote) | 150 min | R$ 700 |
 
-A migration `SinalEVariosServicos` leva os preços de maquiagem e penteado a R$ 380 e desativa o antigo combo "Maquiagem + Penteado": no Social a cliente marca **mais de um serviço** e o valor e a duração somam. O pedido grava `ServiceItemIds`, `ServiceNames` e `TotalPrice` (mudar o preço depois não altera pedidos antigos) e, ao ser aprovado, `DepositAmount` (o sinal). `DepositPaidAt` é preenchido quando a maquiadora marca que recebeu.
+A migration `SinalEVariosServicos` leva os preços de maquiagem e penteado a R$ 380 e desativa o antigo combo "Maquiagem + Penteado": no Social a cliente marca **mais de um serviço** e o valor e a duração somam. Depois, `ReativarPacoteMaquiagemPenteado` traz o pacote de volta (R$ 700, 150 min, R$ 60 mais barato que os dois avulsos); ele não combina com maquiagem ou penteado avulsos na mesma cliente.
+
+**Clientes com serviços diferentes:** o pedido pode trazer `personServices` (um item por cliente, ids separados por vírgula, ex.: `"1,2"` e `"2"`), que vale no lugar de `serviceItemIds` × `people`. Nas consultas de horários o mesmo vai em `groups=1,2;2` (uma cliente por `;`). A descrição dos serviços no painel e nas mensagens sai como "Cliente 1: …; Cliente 2: …". O pedido grava `ServiceItemIds`, `ServiceNames` e `TotalPrice` (mudar o preço depois não altera pedidos antigos) e, ao ser aprovado, `DepositAmount` (o sinal). `DepositPaidAt` é preenchido quando a maquiadora marca que recebeu.
 
 ---
 
@@ -259,9 +264,9 @@ Base: `http://<IP>:5102/api`. A documentação interativa (Swagger) fica em `/sw
 ### Agendamentos
 | Método | Rota | Acesso | Descrição |
 |---|---|---|---|
-| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` (ou `serviceIds=1,3`) | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. Horários que já passaram não entram. `people` é opcional (padrão 1, máx. 20) |
-| GET | `/appointments/availability?from=AAAA-MM-DD&days=31&serviceId=1&people=1` (ou `serviceIds=1,3`) | Público | Quantos horários de início livres há em cada dia do período (`[{ "date": "2026-10-19", "slots": 12 }, ...]`), usado no calendário do site. `days` de 1 a 62 |
-| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento e devolve só `{ id, manageToken }` (o código secreto). **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemIds` (um ou mais, repetido no form), `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
+| GET | `/appointments/available-slots?date=AAAA-MM-DD&serviceId=1&people=1` (ou `serviceIds=1,3`, ou `groups=1,2;2`) | Público | Horários de **início** livres (`["10:00","10:30",...]`) em que a duração total (serviço × pessoas) cabe sem conflito até as 22:00. Horários que já passaram não entram. `people` é opcional (padrão 1, máx. 20) |
+| GET | `/appointments/availability?from=AAAA-MM-DD&days=31&serviceId=1&people=1` (ou `serviceIds=1,3`, ou `groups=1,2;2`) | Público | Quantos horários de início livres há em cada dia do período (`[{ "date": "2026-10-19", "slots": 12 }, ...]`), usado no calendário do site. `days` de 1 a 62 |
+| POST | `/appointments` | Público (10 por 10 min por IP) | Cria agendamento e devolve só `{ id, manageToken }` (o código secreto). **`multipart/form-data`**: `clientName`, `clientPhone`, `clientAddress`, `description` (obrigatório), `serviceItemIds` (um ou mais, repetido no form), `startTime` (ISO 8601 com offset/UTC: início do atendimento), `people` (1 a 20, padrão 1), `personServices` (opcional, serviços de cada cliente, repetido no form), `cep` (opcional, recalcula a taxa) e `images` (0 a 5 arquivos). `409` se o horário estiver ocupado |
 | GET | `/appointments/estimate-fee?cep=` | Público (15/min por IP) | Rua, bairro, cidade, `distanceKm` e `travelFee` para o CEP. `400` CEP inválido, `404` não encontrado |
 | POST | `/appointments/lookup` | Público (10/min por IP) | Body `{ "tokens": ["12.abc..."] }`. Devolve os agendamentos futuros (em análise ou confirmados) dos códigos secretos válidos, cada um com `manageToken`. **Nunca se busca por telefone**: sem o código, saber o número de alguém não dá acesso ao agendamento dela. Nos confirmados com sinal a pagar vêm `depositAmount` e `pixCode` (PIX copia e cola). O código é `id.assinatura` (HMAC com chave derivada de `Jwt:Key`): nada é gravado no banco e o link de WhatsApp (`/#ag=código`) pode ser reenviado sempre |
 | POST | `/appointments/{id}/client-cancel` | Público (10/min por IP) | Body `{ "token": "..." }`. Cancela se o código bater: pedido em análise a qualquer momento, confirmado só com mais de 24 h |
