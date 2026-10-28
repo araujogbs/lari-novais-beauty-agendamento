@@ -60,6 +60,9 @@ namespace AgendamentoApi.Migrations
                     b.Property<DateTime>("EndTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("GoogleEventId")
+                        .HasColumnType("text");
+
                     b.Property<int>("People")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")

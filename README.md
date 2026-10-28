@@ -100,7 +100,7 @@ Acesso escondido: **toque longo de 4 segundos** no título da tela inicial, segu
 ### Automações
 - **WhatsApp automático (adiado):** o `WhatsAppService` está pronto para a Cloud API da Meta ("pedido recebido", confirmação, recusa e expiração, com modelos em `deploy/whatsapp-templates.md`), mas **sem credenciais só registra no log**. A Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros, então por ora a Lari envia as mensagens pelo botão do painel. O PIX só existe depois que ela aprova: o sinal é calculado em `/approve` e o `pixCode` só volta para pedidos `Confirmed`.
 - **Push para a maquiadora:** ao entrar um pedido, a API avisa (1) os navegadores cadastrados pelo painel do site, por **Web Push**, que é o que funciona no iPhone, e (2) os aparelhos do app pelo serviço de push do Expo (sem build do app, esse segundo caminho fica sem aparelhos). O envio Web Push usa a `Lib.Net.Http.WebPush` e não o pacote `WebPush`: este envia no formato antigo (`aesgcm`) que a Apple não entrega.
-- Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento.
+- Criação do evento no **Google Calendar** ao **aprovar**, com nome, telefone, endereço, descrição, quantidade de fotos, valor e deslocamento. O id do evento fica no pedido (`GoogleEventId`) e o evento é **apagado** quando o atendimento é desmarcado (pelo painel ou pela cliente).
 
 ---
 
@@ -228,7 +228,7 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 | Status | string | `Pending`, `Confirmed`, `Rejected`, `Expired`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
 
-**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados), `AdicionarStatusExpirado` (e os expirados), `SinalEVariosServicos`, `AdicionarAparelhosPush`, `AdicionarAssinaturasWebPush` e `ReativarPacoteMaquiagemPenteado`.
+**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados), `AdicionarStatusExpirado` (e os expirados), `SinalEVariosServicos`, `AdicionarAparelhosPush`, `AdicionarAssinaturasWebPush` `ReativarPacoteMaquiagemPenteado` e `AdicionarGoogleEventId` (id do evento na agenda).
 
 A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social, os mesmos mostrados no site:
 
@@ -444,12 +444,10 @@ Já implementado:
 - **Backup só no próprio servidor.** Falta copiar `deploy/backups/` para fora (ex.: `rclone` para Backblaze B2 ou Google Drive).
 - **A janela de 3 meses do calendário existe só no site.** A API ainda aceita pedidos para qualquer data futura enviados direto.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
-- Cancelar um atendimento **não remove** o evento do Google Calendar.
 - O IP da API está fixo em `src/services/api.ts`; o ideal é usar variável de ambiente do Expo.
 - Fotos ficam em disco (`uploads/`, ou o volume `/data/uploads` no Docker), com backup pelo `deploy/backup.sh`. Com muito volume, vale migrar para armazenamento em nuvem.
 - A criação de agendamento (`POST /appointments`) ainda não recusa um `startTime` no passado; só as listas de horários deixaram de oferecê-los.
 - Horário de verão não é tratado no app (o fuso fixo `-03:00` é usado ao montar o horário); a API usa o fuso real de São Paulo.
-- `GoogleCalendarService` usa `GoogleCredential.FromStream`, marcado como obsoleto pelo Google (aviso `CS0618` no build); migrar para `CredentialFactory` ao ligar a integração de verdade.
 - **Notificação push só funciona num build do app**, nunca no Expo Go do Android (o Expo removeu o push remoto lá no SDK 53). Falta, uma vez: `eas init` (grava o `projectId` em `app.json`), subir a credencial **FCM V1** do Firebase no EAS (`eas credentials`) e gerar um build novo (`eas build --profile preview --platform android`). Sem o `projectId` o app simplesmente não cadastra o aparelho. Para iOS é preciso conta Apple Developer paga.
 - **O app Expo não é o caminho principal.** A Lari usa iPhone e, sem conta Apple Developer paga, o app não instala nem recebe push. O painel do site instalado na Tela de Início (com Web Push) faz o mesmo papel e está em produção. O código do app continua no repositório.
 - Ideias: lembrete automático (24 h antes), reagendamento, cadastro de serviços pelo painel.

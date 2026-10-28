@@ -46,6 +46,10 @@ public class Appointment
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // Evento criado no Google Agenda ao aprovar (apagado se o atendimento for desmarcado)
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? GoogleEventId { get; set; }
+
     // Até quando a maquiadora pode responder o pedido (só para os em análise; não é gravado no banco)
     [NotMapped]
     public DateTime? ExpiresAt => Status == AppointmentStatus.Pending ? CreatedAt + AppointmentStatus.PendingExpiration : null;

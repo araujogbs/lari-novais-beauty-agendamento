@@ -349,11 +349,17 @@ public class AppointmentsController : ControllerBase
             ToBrazil(appointment.StartTime), ToBrazil(appointment.EndTime),
             deposit, _depositService.BuildPixCode(appointment.Id, deposit),
             _manageTokens.BuildUrl(appointment.Id));
-        await _calendarService.CreateEventAsync(
+        var eventId = await _calendarService.CreateEventAsync(
             $"{serviceName} - {appointment.ClientName}",
             BuildCalendarDescription(appointment),
             appointment.StartTime,
             appointment.EndTime);
+        if (eventId != null)
+        {
+            appointment.GoogleEventId = eventId;
+            await _context.Appointments.Where(a => a.Id == appointment.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.GoogleEventId, eventId));
+        }
 
         return Ok(appointment);
     }
@@ -507,8 +513,18 @@ public class AppointmentsController : ControllerBase
 
         appointment.Status = AppointmentStatus.Cancelled;
         await _context.SaveChangesAsync();
+        await RemoveCalendarEventAsync(appointment);
 
         return NoContent();
+    }
+
+    // Tira da agenda do Google o evento de um atendimento desmarcado
+    private async Task RemoveCalendarEventAsync(Appointment appointment)
+    {
+        if (appointment.GoogleEventId == null) return;
+        await _calendarService.DeleteEventAsync(appointment.GoogleEventId);
+        appointment.GoogleEventId = null;
+        await _context.SaveChangesAsync();
     }
 
     // GET: api/appointments/images/{fileName} (somente a maquiadora vê as fotos das clientes)
@@ -690,6 +706,7 @@ public class AppointmentsController : ControllerBase
 
         appointment.Status = newStatus;
         await _context.SaveChangesAsync();
+        await RemoveCalendarEventAsync(appointment);
 
         return NoContent(); // HTTP 204
     }
