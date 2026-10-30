@@ -1,34 +1,34 @@
 # Lari Novais Beauty — Agendamento de Maquiagem a Domicílio
 
-Sistema de agendamento feito para uma maquiadora profissional de São Paulo que atende a domicílio. A **cliente** escolhe o serviço, o dia e o horário de início, descreve o que deseja, anexa fotos de referência e já vê a taxa de deslocamento calculada pelo CEP. A **maquiadora** aprova ou recusa cada pedido num painel protegido por login, e os avisos saem pelo WhatsApp.
+Sistema de agendamento feito para uma maquiadora profissional de São Paulo que atende a domicílio. A **cliente** escolhe os serviços de cada pessoa, o dia e o horário de início, descreve o que deseja, anexa fotos de referência e já vê a taxa de deslocamento calculada pelo CEP. A **maquiadora** recebe um push no iPhone, aprova ou recusa cada pedido num painel protegido por login, envia a confirmação com o PIX do sinal pelo WhatsApp, e o atendimento aprovado vai sozinho para o Google Agenda dela.
 
-Este repositório reúne a **API** (.NET) e o **app** (React Native). O site institucional, que usa a mesma API, está em [lari-novais-beauty-site](https://github.com/araujogbs/lari-novais-beauty-site).
+Este repositório tem a **API** (.NET), usada pelo site e pelo painel em produção: [lari-novais-beauty-site](https://github.com/araujogbs/lari-novais-beauty-site). Também guarda o **app** em React Native (Expo), primeira versão do painel, hoje fora de uso (veja [Limitações](#limitações-conhecidas-e-próximos-passos)).
 
 **Em produção:** API em `https://api.larinovaisbeauty.com.br` (VPS com Docker, PostgreSQL e Caddy) e site em [larinovaisbeauty.com.br](https://larinovaisbeauty.com.br). Veja [Publicação (deploy)](#publicação-deploy).
 
-<p align="center">
-  <img src="docs/app-inicio.jpg" width="200" alt="Tela inicial do app" />
-  <img src="docs/app-servicos.jpg" width="200" alt="Escolha do serviço" />
-  <img src="docs/app-horarios.jpg" width="200" alt="Calendário e horários livres" />
-  <img src="docs/app-painel.jpg" width="200" alt="Painel da maquiadora com pedidos em análise" />
-</p>
-<p align="center"><sub>App: início, serviços, horários livres e painel da maquiadora (dados fictícios)</sub></p>
+<table>
+  <tr>
+    <td align="center" valign="top" width="45%"><img src="docs/site-agendamento.png" alt="Agendamento no site: serviços por cliente, dias livres, horários e resumo" /><br /><sub>Agendamento no site: serviços por cliente, calendário de dias livres, horários e resumo</sub></td>
+    <td align="center" valign="top" width="55%"><img src="docs/painel-site.png" alt="Painel Ateliê com pedidos em análise e agenda do dia" /><br /><sub>Painel da maquiadora: pedidos em análise, aprovar/recusar e agenda do dia (dados fictícios)</sub></td>
+  </tr>
+</table>
 
 ## Como funciona
 
 ```mermaid
 flowchart LR
-    App["App<br/>React Native + Expo"] -->|"REST (JWT no painel)"| API
-    Site["Site<br/>React + Vite<br/>(outro repositório)"] -->|"REST (JWT no painel)"| API
-    API["API<br/>ASP.NET Core .NET 10"] --> DB[("PostgreSQL")]
-    API --> WA["WhatsApp<br/>avisos"]
-    API --> GC["Google Calendar<br/>eventos"]
-    API --> GEO["BrasilAPI · OSRM<br/>CEP e distância"]
+    Site["Site + Painel<br/>React + Vite<br/>(outro repositório)"] -->|"REST (JWT no painel)"| API
+    API["API<br/>ASP.NET Core .NET 10"] --> DB[("PostgreSQL<br/>exclusion constraint")]
+    API -->|"pedido novo"| PUSH["Web Push (VAPID)<br/>iPhone da maquiadora"]
+    API -->|"ao aprovar"| GC["Google Calendar<br/>conta de serviço"]
+    API --> GEO["BrasilAPI · Nominatim · OSRM<br/>CEP e distância"]
+    Site -.->|"confirmação e PIX"| WA["WhatsApp da maquiadora<br/>(wa.me)"]
+    BG["BackgroundServices<br/>expiração · bloqueios fixos"] --> DB
 ```
 
-1. A cliente faz o pedido pelo app ou pelo site. Ele nasce **em análise** e já segura o horário.
-2. A maquiadora recebe o aviso e **aprova** (a cliente recebe a confirmação e o evento vai para a agenda) ou **recusa** (com motivo opcional).
-3. Sem resposta em **3 dias**, uma tarefa em segundo plano expira o pedido, libera o horário e avisa a cliente.
+1. A cliente faz o pedido pelo site. Ele nasce **em análise** e já segura o horário; a maquiadora recebe um **push** no iPhone.
+2. No painel ela **aprova** (o sinal é calculado, o evento entra no Google Agenda e a mensagem com o PIX sai pelo WhatsApp dela) ou **recusa** (com motivo opcional).
+3. Sem resposta em **3 dias**, uma tarefa em segundo plano expira o pedido e libera o horário. Outra mantém os **bloqueios fixos** da agenda (as manhãs de segunda a sábado).
 
 ## Destaques técnicos
 
@@ -37,19 +37,29 @@ flowchart LR
 - **Taxa de deslocamento calculada no servidor:** CEP → rua (BrasilAPI) → coordenadas da rua (Nominatim, com as da BrasilAPI de reserva) → distância de carro (OSRM, com Haversine de reserva). O valor enviado pelo cliente nunca é confiado.
 - **Segurança:** JWT com papel `Admin`, senha guardada em hash, limite de requisições por IP, upload validado pelos bytes do arquivo, fotos servidas só por rota autenticada e segredos (incluindo dados pessoais) fora do Git.
 - **Fuso de Brasília de ponta a ponta:** tudo em UTC no banco, com conversão na entrada e na saída.
-- **App organizado por responsabilidade:** telas, componentes, hooks, serviços de API e utilitários separados, com TypeScript e ESLint.
+- **Aviso de pedido novo no iPhone sem app de loja:** Web Push (VAPID, `aes128gcm`) para o painel do site instalado na Tela de Início.
+- **Google Calendar sincronizado:** o evento nasce na aprovação e é apagado quando o atendimento é desmarcado, pelo painel ou pela cliente.
+- **"Meus agendamentos" sem login e sem busca por telefone:** cada pedido tem um código assinado com HMAC (`id.assinatura`), sem nada gravado no banco.
+- **Deploy reproduzível:** Docker Compose com PostgreSQL, API e Caddy (HTTPS automático), migrations ao subir e backup diário.
 
 ## Stack
 
 | Parte | Tecnologias |
 |---|---|
-| API | ASP.NET Core (.NET 10), Entity Framework Core, PostgreSQL (Npgsql), JWT Bearer, Swagger |
-| App | React Native 0.86, Expo SDK 57, TypeScript, Axios, react-native-calendars |
-| Integrações | WhatsApp e Google Calendar (em modo simulação até serem configuradas), BrasilAPI, Nominatim, OSRM |
+| API | ASP.NET Core (.NET 10), Entity Framework Core, PostgreSQL (Npgsql), JWT Bearer, `BackgroundService`, Swagger |
+| Integrações | Google Calendar (conta de serviço), Web Push (`Lib.Net.Http.WebPush`), BrasilAPI, Nominatim, OSRM; WhatsApp Cloud API pronto, mas desligado |
+| Infra | Docker Compose, Caddy, VPS Ubuntu, Let's Encrypt, fail2ban |
+| App (fora de uso) | React Native 0.86, Expo SDK 57, TypeScript, Axios, react-native-calendars |
 
-O mesmo painel da maquiadora também existe no site:
-
-<p align="center"><img src="docs/painel-site.png" width="640" alt="Painel Ateliê no site, com pedidos em análise e agenda do dia" /></p>
+<details>
+<summary>Telas do app React Native (primeira versão do painel, fora de uso)</summary>
+<p align="center">
+  <img src="docs/app-inicio.jpg" width="200" alt="Tela inicial do app" />
+  <img src="docs/app-servicos.jpg" width="200" alt="Escolha do serviço" />
+  <img src="docs/app-horarios.jpg" width="200" alt="Calendário e horários livres" />
+  <img src="docs/app-painel.jpg" width="200" alt="Painel da maquiadora com pedidos em análise" />
+</p>
+</details>
 
 ---
 
@@ -222,13 +232,18 @@ O site institucional, que usa a mesma API, fica em outro repositório: [lari-nov
 | TravelFee | decimal? | Taxa de deslocamento (ida e volta) calculada pelo CEP |
 | DistanceKm | double? | Distância até o ateliê, em km |
 | ReferenceImages | text[] | Nomes dos arquivos em `uploads/` |
-| ServiceItemId | int | FK para o serviço |
+| ServiceItemId | int | FK para o serviço principal |
+| ServiceItemIds | int[] | Todos os serviços do pedido |
+| ServiceNames | string? | Descrição gravada ("Cliente 1: …; Cliente 2: …") |
+| TotalPrice | decimal? | Valor gravado no pedido (mudar o preço depois não altera pedidos antigos) |
+| DepositAmount / DepositPaidAt | decimal? / timestamptz? | Sinal calculado na aprovação e quando foi recebido |
 | People | int | Para quantas pessoas é o serviço (padrão 1) |
 | StartTime / EndTime | timestamptz | UTC. `StartTime` é o início escolhido; `EndTime` é o término previsto, calculado |
 | Status | string | `Pending`, `Confirmed`, `Rejected`, `Expired`, `Cancelled` ou `Blocked` |
 | CreatedAt | timestamptz | |
+| GoogleEventId | string? | Id do evento no Google Agenda (não sai na API) |
 
-**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados), `AdicionarStatusExpirado` (e os expirados), `SinalEVariosServicos`, `AdicionarAparelhosPush`, `AdicionarAssinaturasWebPush` `ReativarPacoteMaquiagemPenteado` e `AdicionarGoogleEventId` (id do evento na agenda).
+**Migrations** (em ordem): `CriarTabelaServicos`, `CriarTabelaAgendamentos`, `AdicionarEnderecoAgendamento`, `AdicionarClientAddress`, `AdicionarConstraintSemSobreposicao` (anti-sobreposição), `AdicionarDescricaoEImagens` (`Description` e `ReferenceImages`), `AdicionarTaxaDeslocamento` (`TravelFee` e `DistanceKm`), `AdicionarQuantidadePessoas` (`People`), `AtualizarServicosSocial`, `AdicionarStatusPendente` (a constraint anti-sobreposição passa a ignorar também os recusados), `AdicionarStatusExpirado` (e os expirados), `SinalEVariosServicos`, `AdicionarAparelhosPush`, `AdicionarAssinaturasWebPush`, `ReativarPacoteMaquiagemPenteado` e `AdicionarGoogleEventId` (id do evento na agenda).
 
 A migration `AtualizarServicosSocial` atualiza preços e durações dos serviços do Social, os mesmos mostrados no site:
 
@@ -397,7 +412,9 @@ No servidor as migrations rodam sozinhas ao subir (`Database__MigrateOnStartup=t
 | Proteção | firewall (22, 80 e 443), fail2ban e atualizações de segurança automáticas |
 | Backup | diário às 03:00 (banco e fotos, 14 dias), em `deploy/backups/` no próprio servidor |
 
-Atualizar a API em produção: `cd /opt/lari/api && git pull && cd deploy && docker compose up -d --build`. A preparação do servidor está documentada em [`deploy/README.md`](deploy/README.md).
+Atualizar a API em produção: `cd /opt/lari/api/deploy && ./backup.sh && git pull && docker compose up -d --build` (backup antes, porque as migrations rodam ao subir).
+
+O Google Agenda usa uma **conta de serviço** com acesso só à agenda da maquiadora (permissão "fazer alterações nos eventos"): o JSON da credencial fica em `deploy/secrets/google-calendar.json` no servidor, fora do Git, montado como somente leitura no contêiner, e o id da agenda vai no `.env` (`GOOGLE_CALENDAR_ID`). A preparação do servidor está documentada em [`deploy/README.md`](deploy/README.md).
 
 ---
 
@@ -440,7 +457,7 @@ Já implementado:
 ## Limitações conhecidas e próximos passos
 
 - **O código de "Meus Agendamentos" vale por aparelho.** Em outro aparelho (ou depois de limpar o navegador), a cliente só reencontra o pedido pelo link que recebe no WhatsApp ou falando com a Lari. Quem só sabe o telefone de alguém não vê nada.
-- **WhatsApp automático e Google Calendar ainda em simulação em produção** (as mensagens e os eventos só aparecem no log). O WhatsApp automático foi **adiado**: a Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros. Hoje a Lari envia a confirmação, o PIX e a recusa pelo botão "Enviar pelo WhatsApp" do painel. O `WhatsAppService` já está pronto para a Cloud API oficial, para quando houver credenciais.
+- **WhatsApp automático ainda em simulação em produção** (as mensagens só aparecem no log; o Google Calendar já está ligado). O WhatsApp automático foi **adiado**: a Meta só libera coexistência (manter o app WhatsApp Business no mesmo número) para parceiros. Hoje a Lari envia a confirmação, o PIX e a recusa pelo botão "Enviar pelo WhatsApp" do painel. O `WhatsAppService` já está pronto para a Cloud API oficial, para quando houver credenciais.
 - **Backup só no próprio servidor.** Falta copiar `deploy/backups/` para fora (ex.: `rclone` para Backblaze B2 ou Google Drive).
 - **A janela de 3 meses do calendário existe só no site.** A API ainda aceita pedidos para qualquer data futura enviados direto.
 - O cálculo de deslocamento depende de serviços gratuitos (BrasilAPI, Nominatim, OSRM público) sem garantia de disponibilidade; o OSRM público tem limites de uso, e em produção vale hospedar o próprio. Se o CEP não puder ser localizado, o agendamento segue sem taxa.
